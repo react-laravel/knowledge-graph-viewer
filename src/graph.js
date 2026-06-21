@@ -3,12 +3,12 @@ import fcose from 'cytoscape-fcose'
 
 cytoscape.use(fcose)
 
-const LAYOUT_OPTIONS = {
+const DEFAULT_LAYOUT_OPTIONS = {
   name: 'fcose',
   animate: true,
   fit: true,
   padding: 80,
-  quality: 'default',
+  quality: 'proof',
   nodeDimensionsIncludeLabels: true,
   packComponents: true,
   nodeRepulsion: 8000,
@@ -23,6 +23,7 @@ export class GraphManager {
   constructor(container, options = {}) {
     this.container = container
     this.spacePressed = false
+    this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS }
 
     this.cy = cytoscape({
       container,
@@ -318,41 +319,44 @@ export class GraphManager {
 
   _initEvents() {
     // 父节点（家族/区域）拖拽 → 平移画布，点击 → 选中
-    let panning = false
-    let panStart = null
+    this._panningParent = null
+    this._panStartMouse = null
+    this._panStartViewport = null
 
+    // 用 Cytoscape 事件识别父节点（比 DOM 事件可靠）
     this.cy.on('mousedown', 'node:parent', (evt) => {
-      if (this.spacePressed) return // 空格模式下正常拖拽父节点
-      // 如果点击的是子节点（而非父节点本身），不拦截，让 Cytoscape 正常处理
-      if (evt.target !== evt.currentTarget) return
-      panning = true
-      panStart = {
-        x: evt.originalEvent.clientX,
-        y: evt.originalEvent.clientY,
-        nodeId: evt.target.id(),
-      }
+      if (this.spacePressed) return
+      if (this._panningParent) return // 正在拖拽中，忽略
+
+      this._panningParent = evt.target.id()
+      this._panStartMouse = { x: evt.originalEvent.clientX, y: evt.originalEvent.clientY }
+      this._panStartViewport = { x: this.cy.pan().x, y: this.cy.pan().y }
       this.cy.userPanningEnabled(false)
       evt.originalEvent.preventDefault()
     })
 
     this.container.addEventListener('mousemove', (e) => {
-      if (!panning || !panStart) return
-      const dx = e.clientX - panStart.x
-      const dy = e.clientY - panStart.y
-      const pan = this.cy.pan()
-      this.cy.pan({ x: pan.x + dx, y: pan.y + dy, rendered: true })
-      panStart = { x: e.clientX, y: e.clientY, nodeId: panStart.nodeId }
+      if (!this._panningParent) return
+      const dx = e.clientX - this._panStartMouse.x
+      const dy = e.clientY - this._panStartMouse.y
+      this.cy.pan({
+        x: this._panStartViewport.x + dx,
+        y: this._panStartViewport.y + dy,
+        rendered: true,
+      })
     })
 
     this.container.addEventListener('mouseup', (e) => {
-      if (!panning) return
-      const moved = panStart ? Math.abs(e.clientX - panStart.x) + Math.abs(e.clientY - panStart.y) : 0
-      const nodeId = panStart ? panStart.nodeId : ''
-      panning = false
-      panStart = null
+      if (!this._panningParent) return
+      const dx = Math.abs(e.clientX - this._panStartMouse.x)
+      const dy = Math.abs(e.clientY - this._panStartMouse.y)
+      const nodeId = this._panningParent
+      this._panningParent = null
+      this._panStartMouse = null
+      this._panStartViewport = null
       this.cy.userPanningEnabled(true)
-      // 移动很小 → 视为点击，手动触发选中
-      if (moved < 3 && nodeId) {
+      // 移动很小 → 视为点击
+      if (dx + dy < 3) {
         this._onSelect?.({
           type: 'node',
           id: nodeId,
@@ -412,11 +416,15 @@ export class GraphManager {
       try { n.grabify() } catch {}
     })
 
-    const layout = this.cy.layout(LAYOUT_OPTIONS)
+    const layout = this.cy.layout(this.layoutOptions)
     layout.run()
     layout.on('layoutstop', () => {
       this._applyNodeDragMode()
     })
+  }
+
+  setLayoutOptions(opts) {
+    Object.assign(this.layoutOptions, opts)
   }
 
   // === 节点/边操作 ===

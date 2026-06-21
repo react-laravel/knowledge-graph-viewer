@@ -42,6 +42,36 @@
           <h3 style="margin-top: 16px">查看模式</h3>
           <button class="btn btn-block" id="btn-related-view">只看相关（1跳）</button>
           <button class="btn btn-block" id="btn-reset-view">显示全部</button>
+
+          <h3 style="margin-top: 16px">布局设置</h3>
+          <div class="layout-section">
+            <div class="layout-field">
+              <label>节点斥力 <span id="val-repulsion">8000</span></label>
+              <input type="range" id="layout-repulsion" min="1000" max="30000" step="500" value="8000" />
+              <p class="layout-hint">节点间排斥力，值越大节点越分散</p>
+            </div>
+            <div class="layout-field">
+              <label>理想边长 <span id="val-edge-length">160</span></label>
+              <input type="range" id="layout-edge-length" min="50" max="500" step="10" value="160" />
+              <p class="layout-hint">连线希望达到的长度，值越大节点间距越大</p>
+            </div>
+            <div class="layout-field">
+              <label>边弹性 <span id="val-elasticity">0.45</span></label>
+              <input type="range" id="layout-elasticity" min="0.05" max="1" step="0.05" value="0.45" />
+              <p class="layout-hint">连线的刚性，值越大连线越紧绷</p>
+            </div>
+            <div class="layout-field">
+              <label>嵌套因子 <span id="val-nesting">0.12</span></label>
+              <input type="range" id="layout-nesting" min="0.01" max="0.5" step="0.01" value="0.12" />
+              <p class="layout-hint">家族节点对其子节点的吸引力，值越大子节点越聚拢</p>
+            </div>
+            <div class="layout-field">
+              <label>重力 <span id="val-gravity">0.35</span></label>
+              <input type="range" id="layout-gravity" min="0.05" max="2" step="0.05" value="0.35" />
+              <p class="layout-hint">整体向中心聚拢的力，值越大图越紧凑不散开</p>
+            </div>
+            <button class="btn btn-block primary" id="btn-apply-layout" style="margin-top: 8px">应用并重新布局</button>
+          </div>
         </div>
 
         <div id="panel-tree" class="tab-panel">

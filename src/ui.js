@@ -118,6 +118,38 @@ export class SidebarPanel {
       this.hasShownRelated = false
       this._updateButtonStates()
     })
+
+    this._initLayoutConfig()
+  }
+
+  // === 布局配置 ===
+
+  _initLayoutConfig() {
+    const sliders = {
+      'layout-repulsion': { key: 'nodeRepulsion', valId: 'val-repulsion', parse: Number },
+      'layout-edge-length': { key: 'idealEdgeLength', valId: 'val-edge-length', parse: Number },
+      'layout-elasticity': { key: 'edgeElasticity', valId: 'val-elasticity', parse: parseFloat },
+      'layout-nesting': { key: 'nestingFactor', valId: 'val-nesting', parse: parseFloat },
+      'layout-gravity': { key: 'gravity', valId: 'val-gravity', parse: parseFloat },
+    }
+
+    Object.entries(sliders).forEach(([inputId, cfg]) => {
+      const input = document.getElementById(inputId)
+      if (!input) return
+      input.addEventListener('input', () => {
+        document.getElementById(cfg.valId).textContent = input.value
+      })
+    })
+
+    document.getElementById('btn-apply-layout')?.addEventListener('click', () => {
+      const opts = { quality: 'proof' }
+      Object.entries(sliders).forEach(([inputId, cfg]) => {
+        const input = document.getElementById(inputId)
+        if (input) opts[cfg.key] = cfg.parse(input.value)
+      })
+      this.graph.setLayoutOptions(opts)
+      this.graph.runLayout()
+    })
   }
 
   // === Store 订阅 ===
