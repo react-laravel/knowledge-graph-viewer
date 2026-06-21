@@ -13,6 +13,7 @@ function showToast(message, isError = false) {
 export function createUI(store, graph, editor) {
   let searchQuery = ''
   let currentSelection = null
+  let hasShownRelated = false
 
   const tabs = document.querySelectorAll('.tab')
   const panels = document.querySelectorAll('.tab-panel')
@@ -30,16 +31,18 @@ export function createUI(store, graph, editor) {
     searchQuery = searchInput.value
     if (!searchQuery.trim()) {
       graph.clearHighlight()
-      return
+    } else {
+      const { nodeIds, edgeIds } = store.search(searchQuery)
+      graph.setHighlight([...nodeIds, ...edgeIds])
     }
-    const { nodeIds, edgeIds } = store.search(searchQuery)
-    graph.setHighlight([...nodeIds, ...edgeIds])
+    updateButtonStates()
   })
 
   document.getElementById('btn-clear-search').addEventListener('click', () => {
     searchInput.value = ''
     searchQuery = ''
     graph.clearHighlight()
+    updateButtonStates()
   })
 
   document.getElementById('btn-export').addEventListener('click', () => {
@@ -87,11 +90,30 @@ export function createUI(store, graph, editor) {
       return
     }
     graph.showRelated(currentSelection.id)
+    hasShownRelated = true
+    updateButtonStates()
   })
 
   document.getElementById('btn-reset-view').addEventListener('click', () => {
     graph.resetView()
+    hasShownRelated = false
+    updateButtonStates()
   })
+
+  function updateButtonStates() {
+    const btnRelated = document.getElementById('btn-related-view')
+    if (btnRelated) {
+      btnRelated.disabled = !currentSelection || currentSelection.type !== 'node'
+    }
+    const btnReset = document.getElementById('btn-reset-view')
+    if (btnReset) {
+      btnReset.disabled = !hasShownRelated
+    }
+    const btnClear = document.getElementById('btn-clear-search')
+    if (btnClear) {
+      btnClear.disabled = !searchQuery.trim()
+    }
+  }
 
   store.subscribe(() => {
     if (searchQuery.trim()) {
@@ -104,6 +126,7 @@ export function createUI(store, graph, editor) {
     if (!selection) {
       currentSelection = null
       editor.onCanvasDeselect()
+      updateButtonStates()
       return
     }
     currentSelection = selection
@@ -112,7 +135,11 @@ export function createUI(store, graph, editor) {
     } else {
       editor.onEdgeSelect(selection.id)
     }
+    updateButtonStates()
   }
+
+  // 初始状态：未选中任何节点，按钮禁用
+  updateButtonStates()
 
   return { onSelect }
 }

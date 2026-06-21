@@ -596,7 +596,7 @@ export function createInlineEditor(store, graph) {
       return
     }
 
-    if ((e.key === 'Enter' || e.key === 'F2') && !isInputFocused()) {
+    if (e.key === 'Enter' && !isInputFocused()) {
       e.preventDefault()
       if (selectedEdgeId) startEdgeEdit()
       else if (selectedNodeId) startEdit()
