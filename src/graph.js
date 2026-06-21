@@ -422,7 +422,7 @@ export class GraphManager {
   // === 节点/边操作 ===
 
   setHighlight(ids) {
-    this.cy.elements().removeClass('highlighted dimmed')
+    this.cy.elements().removeClass('highlighted')
     if (!ids.length) return
 
     const matched = this.cy.collection()
@@ -432,8 +432,7 @@ export class GraphManager {
     })
 
     if (matched.nonempty()) {
-      this.cy.elements().addClass('dimmed')
-      matched.removeClass('dimmed').addClass('highlighted')
+      matched.addClass('highlighted')
       this.cy.animate({ fit: { eles: matched, padding: 80 }, duration: 300 })
     }
   }
@@ -674,26 +673,22 @@ const STYLES = [
   {
     selector: '.highlighted',
     style: {
-      'border-width': 2,
+      'border-width': 3,
       'border-color': '#e74c3c',
-      'line-color': '#e74c3c',
-      'target-arrow-color': '#e74c3c',
+      'background-color': '#fff0f0',
       'z-index': 10,
     },
   },
   {
     selector: 'edge.highlighted',
     style: {
-      width: 2,
+      width: 3,
       opacity: 1,
       'line-color': '#e74c3c',
       'target-arrow-color': '#e74c3c',
       color: '#c0392b',
+      'z-index': 10,
     },
-  },
-  {
-    selector: '.dimmed',
-    style: { opacity: 0.12 },
   },
   {
     selector: '.selected',
