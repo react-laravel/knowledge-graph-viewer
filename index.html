@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>知识图谱编辑器</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="graph-pane" class="graph-pane">
+        <div id="cy">
+          <div class="canvas-hint">
+            普通拖拽移动视角 · 按住 <kbd>Space</kbd> 拖拽节点/家族 · <kbd>Tab</kbd> 子节点 · <kbd>Shift+点击</kbd> 关联 · <kbd>L</kbd> 关联模式 · <kbd>F2</kbd> 编辑 · <kbd>Del</kbd> 删除
+          </div>
+        </div>
+        <div id="editor-layer" class="editor-layer"></div>
+      </div>
+
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <h1>知识图谱编辑器</h1>
+          <p>数据自动保存到本地浏览器</p>
+        </div>
+
+        <div class="graph-selector">
+          <select id="graph-select" title="选择图谱"></select>
+          <div class="graph-selector-actions">
+            <button class="btn btn-icon" id="btn-new-graph" title="新建图谱">+</button>
+            <button class="btn btn-icon" id="btn-delete-graph" title="删除图谱">×</button>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="shortcuts">操作</button>
+          <button class="tab" data-tab="keys">快捷键</button>
+          <button class="tab" data-tab="data">数据</button>
+        </div>
+
+        <div id="panel-shortcuts" class="tab-panel active">
+          <h3>搜索</h3>
+          <p class="hint">按节点名称、ID 或关系类型搜索，匹配项会高亮显示</p>
+          <div class="search-box">
+            <input type="text" id="search-input" placeholder="输入关键词..." />
+            <button class="btn" id="btn-clear-search">清除</button>
+          </div>
+
+          <h3 style="margin-top: 16px">查看模式</h3>
+          <button class="btn btn-block" id="btn-related-view">只看相关（1跳）</button>
+          <button class="btn btn-block" id="btn-reset-view">显示全部</button>
+        </div>
+
+        <div id="panel-keys" class="tab-panel">
+          <h3>键盘操作</h3>
+          <p class="hint">点击节点选中，直接在图上编辑，无需填表单</p>
+          <ul class="shortcut-list">
+            <li><span class="shortcut-desc">移动视角</span><span class="shortcut-keys">普通拖拽画布</span></li>
+            <li><span class="shortcut-desc">拖拽节点 / 家族</span><span class="shortcut-keys">按住 <kbd>Space</kbd> + 拖拽</span></li>
+            <li><span class="shortcut-desc">关联两个节点</span><span class="shortcut-keys"><kbd>Shift+点击</kbd> / <kbd>L</kbd></span></li>
+            <li><span class="shortcut-desc">编辑关系类型</span><span class="shortcut-keys"><kbd>F2</kbd> / 双击连线</span></li>
+            <li><span class="shortcut-desc">删除关系</span><span class="shortcut-keys">选中连线 · <kbd>Del</kbd></span></li>
+            <li><span class="shortcut-desc">创建子节点</span><span class="shortcut-keys"><kbd>Tab</kbd></span></li>
+            <li><span class="shortcut-desc">创建同级节点</span><span class="shortcut-keys"><kbd>Enter</kbd></span></li>
+            <li><span class="shortcut-desc">编辑节点名称</span><span class="shortcut-keys"><kbd>F2</kbd> / 双击</span></li>
+            <li><span class="shortcut-desc">删除节点</span><span class="shortcut-keys"><kbd>Del</kbd></span></li>
+            <li><span class="shortcut-desc">撤销 / 重做</span><span class="shortcut-keys"><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></span></li>
+            <li><span class="shortcut-desc">取消编辑</span><span class="shortcut-keys"><kbd>Esc</kbd></span></li>
+          </ul>
+          <p class="hint" style="margin-top: 12px">编辑中按 Tab / Enter 会先保存当前内容，再创建下一个节点</p>
+        </div>
+
+        <div id="panel-data" class="tab-panel">
+          <h3>数据管理</h3>
+          <p class="hint">数据保存在浏览器 localStorage，刷新页面不会丢失</p>
+          <button class="btn btn-block" id="btn-export">导出 JSON</button>
+          <button class="btn btn-block" id="btn-import">导入 JSON</button>
+          <input type="file" id="file-import" accept=".json" />
+          <button class="btn btn-block" id="btn-layout">重新布局</button>
+          <button class="btn danger btn-block" id="btn-reset">恢复默认示例</button>
+        </div>
+      </aside>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
