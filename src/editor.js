@@ -1,658 +1,691 @@
 /** XMind 风格内联编辑：点击节点直接输入，Tab 子节点，Enter 同级节点 */
 
-export function createInlineEditor(store, graph) {
-  const container = document.getElementById('cy')
-  const overlayRoot = document.getElementById('editor-layer') ?? container
-  let selectedNodeId = null
-  let selectedEdgeId = null
-  let editingNodeId = null
-  let editingEdgeId = null
-  let linkSourceId = null
-  let isComposing = false
-  let editStartLabel = ''
-  const textHistory = []
-  let textHistoryIndex = -1
+export class InlineEditor {
+  constructor(store, graph) {
+    this.store = store
+    this.graph = graph
 
-  const overlay = document.createElement('div')
-  overlay.className = 'inline-editor node-editor'
-  overlay.innerHTML = '<textarea rows="1" spellcheck="false" autocomplete="off"></textarea>'
-  overlayRoot.appendChild(overlay)
+    this.container = document.getElementById('cy')
+    this.overlayRoot = document.getElementById('editor-layer') ?? this.container
 
-  const edgeOverlay = document.createElement('div')
-  edgeOverlay.className = 'inline-editor edge-editor'
-  edgeOverlay.innerHTML = '<input type="text" spellcheck="false" autocomplete="off" placeholder="关系类型" />'
-  overlayRoot.appendChild(edgeOverlay)
+    // 状态
+    this.selectedNodeId = null
+    this.selectedEdgeId = null
+    this.editingNodeId = null
+    this.editingEdgeId = null
+    this.linkSourceId = null
+    this.isComposing = false
+    this.editStartLabel = ''
+    this.textHistory = []
+    this.textHistoryIndex = -1
 
-  const nodeInput = overlay.querySelector('textarea')
-  const edgeInput = edgeOverlay.querySelector('input')
-
-  function isInputFocused() {
-    return document.activeElement === nodeInput || document.activeElement === edgeInput
+    // DOM
+    this._initOverlays()
+    this._initEvents()
   }
 
-  function isBlockedTarget(el) {
+  // === DOM 初始化 ===
+
+  _initOverlays() {
+    const overlay = document.createElement('div')
+    overlay.className = 'inline-editor node-editor'
+    overlay.innerHTML = '<textarea rows="1" spellcheck="false" autocomplete="off"></textarea>'
+    this.overlayRoot.appendChild(overlay)
+
+    const edgeOverlay = document.createElement('div')
+    edgeOverlay.className = 'inline-editor edge-editor'
+    edgeOverlay.innerHTML = '<input type="text" spellcheck="false" autocomplete="off" placeholder="关系类型" />'
+    this.overlayRoot.appendChild(edgeOverlay)
+
+    this.overlay = overlay
+    this.edgeOverlay = edgeOverlay
+    this.nodeInput = overlay.querySelector('textarea')
+    this.edgeInput = edgeOverlay.querySelector('input')
+  }
+
+  // === 事件绑定 ===
+
+  _initEvents() {
+    // Edge input 事件
+    this.edgeInput.addEventListener('mousedown', (e) => {
+      if (!this.editingEdgeId && this.selectedEdgeId) {
+        e.preventDefault()
+        this.startEdgeEdit(this.selectedEdgeId)
+      }
+    })
+
+    this.edgeInput.addEventListener('keydown', (e) => {
+      if (this.isComposing) return
+      if (this._isUndoShortcut(e)) return
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.commitEdgeEdit()
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        const edge = this.selectedEdgeId ? this.store.getEdge(this.selectedEdgeId) : null
+        if (edge) this.edgeInput.value = edge.type
+        this.editingEdgeId = null
+        this.edgeInput.readOnly = true
+        this.edgeOverlay.classList.remove('editing')
+        this.edgeInput.blur()
+      }
+    })
+
+    this.edgeInput.addEventListener('blur', () => {
+      if (this.editingEdgeId) this.commitEdgeEdit()
+      this.editingEdgeId = null
+    })
+
+    // Node input 事件
+    this.nodeInput.addEventListener('input', () => {
+      if (this.editingNodeId) this._recordTextState()
+    })
+
+    this.nodeInput.addEventListener('compositionstart', () => {
+      this.isComposing = true
+    })
+
+    this.nodeInput.addEventListener('compositionend', () => {
+      this.isComposing = false
+      if (this.editingNodeId) this._recordTextState()
+    })
+
+    this.nodeInput.addEventListener('keydown', (e) => {
+      if (this.isComposing) return
+
+      if (this._isUndoShortcut(e)) {
+        e.preventDefault()
+        if (e.shiftKey) this.handleRedo()
+        else this.handleUndo()
+        return
+      }
+
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        this.createChild()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        if (this.commitEdit()) this.createSibling()
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        this.nodeInput.value = this.editStartLabel
+        this._resetTextHistory(this.editStartLabel)
+        this.stopEdit()
+        return
+      }
+    })
+
+    this.nodeInput.addEventListener('blur', () => {
+      if (this.editingNodeId) this.commitEdit()
+      this.editingNodeId = null
+    })
+
+    // 全局键盘事件
+    document.addEventListener('keydown', (e) => {
+      if (this._isBlockedTarget(e.target)) return
+      if (this.isComposing) return
+
+      if (this._isUndoShortcut(e)) {
+        if (this._isInputFocused() && this.editingNodeId) return
+        e.preventDefault()
+        if (e.shiftKey) this.handleRedo()
+        else this.handleUndo()
+        return
+      }
+
+      if (e.key === 'l' || e.key === 'L') {
+        if (!this._isInputFocused()) {
+          e.preventDefault()
+          this.startLinkMode()
+        }
+        return
+      }
+
+      if (e.key === 'Escape' && !this._isInputFocused()) {
+        if (this.linkSourceId) {
+          e.preventDefault()
+          this.cancelLinkMode()
+          InlineEditor.showToast('已取消关联')
+          return
+        }
+      }
+
+      if (e.key === 'Tab' && !this._isInputFocused()) {
+        e.preventDefault()
+        if (!this.selectedNodeId) {
+          const nodes = this.store.getAllNodes()
+          if (nodes.length === 0) {
+            const id = this.store.addChildNode(null, '新节点')
+            this.selectNode(id)
+            this.startEdit(id)
+          } else {
+            this.selectNode(nodes[0].id)
+            this.createChild(nodes[0].id)
+          }
+        } else {
+          this.createChild()
+        }
+        return
+      }
+
+      if (e.key === 'Enter' && !this._isInputFocused()) {
+        e.preventDefault()
+        if (this.selectedEdgeId) this.startEdgeEdit()
+        else if (this.selectedNodeId) this.startEdit()
+        return
+      }
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !this._isInputFocused()) {
+        e.preventDefault()
+        this.deleteSelected()
+        return
+      }
+
+      if (
+        this.selectedNodeId &&
+        !this.editingNodeId &&
+        !this._isInputFocused() &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        this.startEdit()
+        this.nodeInput.value = e.key
+        this._resetTextHistory(e.key)
+        this.nodeInput.setSelectionRange(1, 1)
+      }
+    })
+
+    // Cytoscape 双击事件
+    this.graph.cy.on('dbltap', 'node', (evt) => {
+      this.startEdit(evt.target.id())
+    })
+
+    this.graph.cy.on('dbltap', 'edge', (evt) => {
+      this.onEdgeSelect(evt.target.id())
+      this.startEdgeEdit(evt.target.id())
+    })
+
+    // 平移/缩放时更新编辑器位置
+    this.graph.cy.on('pan zoom resize', () => {
+      if (this.editingNodeId && this.overlay.classList.contains('visible')) {
+        this._updateOverlayPosition(this.editingNodeId)
+      }
+      if (this.selectedEdgeId && this.edgeOverlay.classList.contains('visible')) {
+        this._updateEdgeOverlayPosition(this.selectedEdgeId)
+      }
+    })
+  }
+
+  // === 辅助方法 ===
+
+  _isInputFocused() {
+    return document.activeElement === this.nodeInput || document.activeElement === this.edgeInput
+  }
+
+  _isBlockedTarget(el) {
     return el?.closest('#sidebar input, #sidebar select, #sidebar textarea, #sidebar button')
   }
 
-  function isUndoShortcut(e) {
+  _isUndoShortcut(e) {
     return (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'
   }
 
-  function recordTextState() {
-    const value = nodeInput.value
-    if (textHistory[textHistoryIndex] === value) return
-    textHistory.splice(textHistoryIndex + 1)
-    textHistory.push(value)
-    textHistoryIndex = textHistory.length - 1
+  _recordTextState() {
+    const value = this.nodeInput.value
+    if (this.textHistory[this.textHistoryIndex] === value) return
+    this.textHistory.splice(this.textHistoryIndex + 1)
+    this.textHistory.push(value)
+    this.textHistoryIndex = this.textHistory.length - 1
   }
 
-  function resetTextHistory(value) {
-    textHistory.length = 0
-    textHistory.push(value)
-    textHistoryIndex = 0
+  _resetTextHistory(value) {
+    this.textHistory.length = 0
+    this.textHistory.push(value)
+    this.textHistoryIndex = 0
   }
 
-  function undoText() {
-    if (textHistoryIndex <= 0) return false
-    textHistoryIndex -= 1
-    nodeInput.value = textHistory[textHistoryIndex]
+  _undoText() {
+    if (this.textHistoryIndex <= 0) return false
+    this.textHistoryIndex -= 1
+    this.nodeInput.value = this.textHistory[this.textHistoryIndex]
     return true
   }
 
-  function redoText() {
-    if (textHistoryIndex >= textHistory.length - 1) return false
-    textHistoryIndex += 1
-    nodeInput.value = textHistory[textHistoryIndex]
+  _redoText() {
+    if (this.textHistoryIndex >= this.textHistory.length - 1) return false
+    this.textHistoryIndex += 1
+    this.nodeInput.value = this.textHistory[this.textHistoryIndex]
     return true
   }
 
-  function updateOverlayPosition(nodeId) {
-    const pos = graph.getNodeScreenPosition(nodeId)
+  _updateOverlayPosition(nodeId) {
+    const pos = this.graph.getNodeScreenPosition(nodeId)
     if (!pos) {
-      hideOverlay()
+      this.hideOverlay()
       return false
     }
-    overlay.style.left = `${pos.x}px`
-    overlay.style.top = `${pos.y}px`
-    overlay.style.width = `${pos.w}px`
-    overlay.style.height = `${pos.h}px`
+    this.overlay.style.left = `${pos.x}px`
+    this.overlay.style.top = `${pos.y}px`
+    this.overlay.style.width = `${pos.w}px`
+    this.overlay.style.height = `${pos.h}px`
     return true
   }
 
-  function focusNodeInputAtEnd() {
-    nodeInput.focus()
-    const len = nodeInput.value.length
-    nodeInput.setSelectionRange(len, len)
+  _updateEdgeOverlayPosition(edgeId) {
+    const pos = this.graph.getEdgeScreenPosition(edgeId)
+    if (!pos) {
+      this.hideEdgeOverlay()
+      return false
+    }
+    this.edgeOverlay.style.left = `${pos.x}px`
+    this.edgeOverlay.style.top = `${pos.y}px`
+    this.edgeOverlay.style.width = `${pos.w}px`
+    return true
   }
 
-  function selectNode(id) {
-    selectedNodeId = id
-    graph.setSelected(id)
+  static showToast(message, isError = false) {
+    const toast = document.getElementById('toast')
+    toast.textContent = message
+    toast.className = `toast show${isError ? ' error' : ''}`
+    clearTimeout(InlineEditor._toastTimer)
+    InlineEditor._toastTimer = setTimeout(() => {
+      toast.className = 'toast'
+    }, 2500)
   }
 
-  function deselect() {
-    selectedNodeId = null
-    stopEdit()
-    clearEdgeSelection()
-    cancelLinkMode()
-    graph.setSelected(null)
-    hideOverlay()
+  // === 公开 API ===
+
+  selectNode(id) {
+    this.selectedNodeId = id
+    this.graph.setSelected(id)
   }
 
-  function hideEdgeOverlay() {
-    edgeOverlay.classList.remove('visible', 'editing')
+  deselect() {
+    this.selectedNodeId = null
+    this.stopEdit()
+    this.clearEdgeSelection()
+    this.cancelLinkMode()
+    this.graph.setSelected(null)
+    this.hideOverlay()
   }
 
-  function applyNodeEditorClasses(node) {
-    overlay.classList.toggle('important-node', node?.important === 'yes')
-    overlay.classList.toggle('male-node', node?.gender === 'm')
-    overlay.classList.toggle('female-node', node?.gender === 'f')
+  hideOverlay() {
+    this.overlay.classList.remove('visible', 'editing', 'important-node', 'male-node', 'female-node')
+    this.graph.setNodeEditing(null, false)
   }
 
-  function hideOverlay() {
-    overlay.classList.remove('visible', 'editing', 'important-node', 'male-node', 'female-node')
-    graph.setNodeEditing(null, false)
+  hideEdgeOverlay() {
+    this.edgeOverlay.classList.remove('visible', 'editing')
   }
 
-  function showNodeEditor(nodeId) {
-    const node = store.getNode(nodeId)
-    if (!node || !updateOverlayPosition(nodeId)) return
+  showNodeEditor(nodeId) {
+    const node = this.store.getNode(nodeId)
+    if (!node || !this._updateOverlayPosition(nodeId)) return
 
-    nodeInput.value = node.label
-    resetTextHistory(node.label)
-    applyNodeEditorClasses(node)
-    overlay.classList.add('visible', 'editing')
-    graph.setNodeEditing(nodeId, true)
+    this.nodeInput.value = node.label
+    this._resetTextHistory(node.label)
+    // 先清除所有状态类再添加当前需要的
+    this.overlay.classList.remove('important-node', 'male-node', 'female-node')
+    if (node.important === 'yes') this.overlay.classList.add('important-node')
+    if (node.gender === 'm') this.overlay.classList.add('male-node')
+    if (node.gender === 'f') this.overlay.classList.add('female-node')
+    this.overlay.classList.add('visible', 'editing')
+    this.graph.setNodeEditing(nodeId, true)
   }
 
-  function clearEdgeSelection() {
-    selectedEdgeId = null
-    editingEdgeId = null
-    hideEdgeOverlay()
+  clearEdgeSelection() {
+    this.selectedEdgeId = null
+    this.editingEdgeId = null
+    this.hideEdgeOverlay()
   }
 
-  function cancelLinkMode() {
-    linkSourceId = null
-    graph.clearLinkSource()
-    container.classList.remove('link-mode')
+  cancelLinkMode() {
+    this.linkSourceId = null
+    this.graph.clearLinkSource()
+    this.container.classList.remove('link-mode')
   }
 
-  function startLinkMode() {
-    if (!selectedNodeId) {
-      showToast('请先选中源节点', true)
+  startLinkMode() {
+    if (!this.selectedNodeId) {
+      InlineEditor.showToast('请先选中源节点', true)
       return
     }
-    if (editingNodeId) commitEdit()
-    clearEdgeSelection()
-    linkSourceId = selectedNodeId
-    graph.setLinkSource(linkSourceId)
-    container.classList.add('link-mode')
-    showToast('点击目标节点建立关系')
+    if (this.editingNodeId) this.commitEdit()
+    this.clearEdgeSelection()
+    this.linkSourceId = this.selectedNodeId
+    this.graph.setLinkSource(this.linkSourceId)
+    this.container.classList.add('link-mode')
+    InlineEditor.showToast('点击目标节点建立关系')
   }
 
-  function linkNodes(sourceId, targetId) {
+  linkNodes(sourceId, targetId) {
     if (!sourceId || !targetId || sourceId === targetId) return false
-    if (editingNodeId) commitEdit()
+    if (this.editingNodeId) this.commitEdit()
 
     try {
-      const edgeId = store.addEdge({ source: sourceId, target: targetId, type: '关联' })
-      cancelLinkMode()
-      clearEdgeSelection()
-      selectedNodeId = null
-      hideOverlay()
-      selectedEdgeId = edgeId
-      graph.setSelected(edgeId)
-      showEdgeEditor(edgeId, { focus: true })
-      showToast('已建立关系')
+      const edgeId = this.store.addEdge({ source: sourceId, target: targetId, type: '关联' })
+      this.cancelLinkMode()
+      this.clearEdgeSelection()
+      this.selectedNodeId = null
+      this.hideOverlay()
+      this.selectedEdgeId = edgeId
+      this.graph.setSelected(edgeId)
+      this.showEdgeEditor(edgeId, { focus: true })
+      InlineEditor.showToast('已建立关系')
       return true
     } catch (e) {
-      showToast(e.message, true)
+      InlineEditor.showToast(e.message, true)
       return false
     }
   }
 
-  function updateEdgeOverlayPosition(edgeId) {
-    const pos = graph.getEdgeScreenPosition(edgeId)
-    if (!pos) {
-      hideEdgeOverlay()
-      return false
-    }
-    edgeOverlay.style.left = `${pos.x}px`
-    edgeOverlay.style.top = `${pos.y}px`
-    edgeOverlay.style.width = `${pos.w}px`
-    return true
-  }
-
-  function showEdgeEditor(edgeId, { focus = false } = {}) {
-    const edge = store.getEdge(edgeId)
+  showEdgeEditor(edgeId, { focus = false } = {}) {
+    const edge = this.store.getEdge(edgeId)
     if (!edge) return
 
-    hideOverlay()
-    selectedEdgeId = edgeId
-    if (!updateEdgeOverlayPosition(edgeId)) return
+    this.hideOverlay()
+    this.selectedEdgeId = edgeId
+    if (!this._updateEdgeOverlayPosition(edgeId)) return
 
-    edgeInput.value = edge.type
-    edgeInput.readOnly = !focus
-    edgeOverlay.classList.toggle('editing', focus)
-    edgeOverlay.classList.add('visible')
+    this.edgeInput.value = edge.type
+    this.edgeInput.readOnly = !focus
+    this.edgeOverlay.classList.toggle('editing', focus)
+    this.edgeOverlay.classList.add('visible')
     if (focus) {
-      editingEdgeId = edgeId
-      edgeInput.focus()
-      edgeInput.select()
+      this.editingEdgeId = edgeId
+      this.edgeInput.focus()
+      this.edgeInput.select()
     }
   }
 
-  function startEdgeEdit(edgeId = selectedEdgeId) {
+  startEdgeEdit(edgeId) {
     if (!edgeId) return
-    editingEdgeId = edgeId
-    showEdgeEditor(edgeId, { focus: true })
+    this.editingEdgeId = edgeId
+    this.showEdgeEditor(edgeId, { focus: true })
   }
 
-  function commitEdgeEdit() {
-    if (!editingEdgeId) return true
-    const type = edgeInput.value.trim()
+  commitEdgeEdit() {
+    if (!this.editingEdgeId) return true
+    const type = this.edgeInput.value.trim()
     if (!type) {
-      showToast('关系类型不能为空', true)
-      edgeInput.focus()
+      InlineEditor.showToast('关系类型不能为空', true)
+      this.edgeInput.focus()
       return false
     }
     try {
-      store.updateEdge(editingEdgeId, { type })
-      editingEdgeId = null
-      edgeInput.readOnly = true
-      edgeOverlay.classList.remove('editing')
+      this.store.updateEdge(this.editingEdgeId, { type })
+      this.editingEdgeId = null
+      this.edgeInput.readOnly = true
+      this.edgeOverlay.classList.remove('editing')
       return true
     } catch (e) {
-      showToast(e.message, true)
+      InlineEditor.showToast(e.message, true)
       return false
     }
   }
 
-  function deleteSelectedEdge() {
-    if (!selectedEdgeId) return
-    store.deleteEdge(selectedEdgeId)
-    clearEdgeSelection()
-    graph.setSelected(null)
-  }
-
-  function startEdit(nodeId = selectedNodeId) {
+  startEdit(nodeId) {
     if (!nodeId) return
-    const node = store.getNode(nodeId)
+    const node = this.store.getNode(nodeId)
     if (!node) return
 
-    editingNodeId = nodeId
-    selectedNodeId = nodeId
-    editStartLabel = node.label
-    graph.setSelected(nodeId)
-    showNodeEditor(nodeId)
-    nodeInput.readOnly = false
-    requestAnimationFrame(() => focusNodeInputAtEnd())
+    this.editingNodeId = nodeId
+    this.selectedNodeId = nodeId
+    this.editStartLabel = node.label
+    this.graph.setSelected(nodeId)
+    this.showNodeEditor(nodeId)
+    this.nodeInput.readOnly = false
+    requestAnimationFrame(() => {
+      this.nodeInput.focus()
+      const len = this.nodeInput.value.length
+      this.nodeInput.setSelectionRange(len, len)
+    })
   }
 
-  function stopEdit() {
-    editingNodeId = null
-    graph.setNodeEditing(null, false)
-    nodeInput.readOnly = true
-    overlay.classList.remove('editing')
-    nodeInput.blur()
-    hideOverlay()
+  stopEdit() {
+    this.editingNodeId = null
+    this.graph.setNodeEditing(null, false)
+    this.nodeInput.readOnly = true
+    this.overlay.classList.remove('editing')
+    this.nodeInput.blur()
+    this.hideOverlay()
   }
 
-  function commitEdit() {
-    if (!editingNodeId) return true
-    const label = nodeInput.value.trim()
+  commitEdit() {
+    if (!this.editingNodeId) return true
+    const label = this.nodeInput.value.trim()
     if (!label) {
-      showToast('节点名称不能为空', true)
-      nodeInput.focus()
+      InlineEditor.showToast('节点名称不能为空', true)
+      this.nodeInput.focus()
       return false
     }
     try {
-      store.updateNode(editingNodeId, { label })
-      graph.setNodeEditing(null, false)
-      editingNodeId = null
-      hideOverlay()
+      this.store.updateNode(this.editingNodeId, { label })
+      this.graph.setNodeEditing(null, false)
+      this.editingNodeId = null
+      this.hideOverlay()
       return true
     } catch (e) {
-      showToast(e.message, true)
+      InlineEditor.showToast(e.message, true)
       return false
     }
   }
 
-  function applyGraphHistory(action) {
-    const keepNodeId = selectedNodeId
-    const wasEditing = !!editingNodeId
-    editingNodeId = null
+  handleUndo() {
+    if (this.editingNodeId) {
+      if (this._undoText()) return
+      this._applyGraphHistory(() => this.store.undo())
+      return
+    }
+    this._applyGraphHistory(() => this.store.undo())
+  }
+
+  handleRedo() {
+    if (this.editingNodeId) {
+      if (this._redoText()) return
+      this._applyGraphHistory(() => this.store.redo())
+      return
+    }
+    this._applyGraphHistory(() => this.store.redo())
+  }
+
+  createChild(fromId) {
+    if (!fromId) return null
+    if (!this.commitEdit()) return null
+
+    const childId = this.store.addChildNode(fromId)
+    this.graph.positionNearParent(fromId, childId)
+    this.selectNode(childId)
+    this.startEdit(childId)
+    return childId
+  }
+
+  createSibling(fromId) {
+    if (!fromId) return null
+    if (!this.commitEdit()) return null
+
+    const siblingId = this.store.addSiblingNode(fromId)
+    const parentId = this.store.getParentId(fromId)
+    if (parentId) this.graph.positionNearParent(parentId, siblingId)
+    this.selectNode(siblingId)
+    this.startEdit(siblingId)
+    return siblingId
+  }
+
+  deleteSelected() {
+    if (this.selectedEdgeId && !this._isInputFocused()) {
+      this.store.deleteEdge(this.selectedEdgeId)
+      this.clearEdgeSelection()
+      this.graph.setSelected(null)
+      return
+    }
+    if (!this.selectedNodeId || this._isInputFocused()) return
+    const node = this.store.getNode(this.selectedNodeId)
+    if (!node) return
+
+    this.store.deleteNode(this.selectedNodeId)
+    this.selectedNodeId = null
+    this.hideOverlay()
+    this.graph.setSelected(null)
+  }
+
+  deleteNodeById(nodeId) {
+    const node = this.store.getNode(nodeId)
+    if (!node) return
+    if (!confirm(`确定删除节点「${node.label}」吗？`)) return
+    this.store.deleteNode(nodeId)
+    if (this.selectedNodeId === nodeId) {
+      this.selectedNodeId = null
+      this.hideOverlay()
+      this.graph.setSelected(null)
+    }
+  }
+
+  _moveIntoGroup(nodeId, groupNodeId) {
+    const node = this.store.getNode(nodeId)
+    const groupNode = this.store.getNode(groupNodeId)
+    if (!node || !groupNode) return
+
+    // 不能把家族节点移入另一家族
+    if (node.group === 'org') {
+      InlineEditor.showToast('无法将家族移入另一家族', true)
+      return
+    }
+
+    // 如果已在同一家族中 → 移出家族
+    if (node.parent === groupNodeId) {
+      this.store.removeNodeFromGroup(nodeId)
+      this.selectedNodeId = nodeId
+      this.graph.setSelected(nodeId)
+      InlineEditor.showToast(`已将「${node.label}」移出「${groupNode.label}」`)
+      return
+    }
+
+    this.store.setNodeParent(nodeId, groupNodeId)
+    this.selectedNodeId = nodeId
+    this.graph.setSelected(nodeId)
+    InlineEditor.showToast(`已将「${node.label}」归入「${groupNode.label}」`)
+  }
+
+  onNodeSelect(nodeId, { shiftLink = false } = {}) {
+    if (this.linkSourceId) {
+      if (this.linkSourceId === nodeId) {
+        this.cancelLinkMode()
+        InlineEditor.showToast('已取消关联')
+        return
+      }
+      this.linkNodes(this.linkSourceId, nodeId)
+      return
+    }
+
+    // 选中家族节点后 Shift+点击目标节点 → 将目标归入该家族
+    if (shiftLink && this.selectedNodeId && this.selectedNodeId !== nodeId) {
+      const selectedNode = this.store.getNode(this.selectedNodeId)
+      if (selectedNode && selectedNode.group === 'org') {
+        this._moveIntoGroup(nodeId, this.selectedNodeId)
+        return
+      }
+      this.linkNodes(this.selectedNodeId, nodeId)
+      return
+    }
+
+    if (this.editingNodeId && this.editingNodeId !== nodeId) {
+      if (!this.commitEdit()) {
+        this.nodeInput.value = this.editStartLabel
+        this.stopEdit()
+      }
+    }
+    if (this.editingEdgeId) this.commitEdgeEdit()
+
+    this.clearEdgeSelection()
+    this.cancelLinkMode()
+    this.selectedNodeId = nodeId
+    this.graph.setSelected(nodeId)
+    this.hideOverlay()
+  }
+
+  onEdgeSelect(edgeId) {
+    if (this.editingNodeId) this.commitEdit()
+    this.cancelLinkMode()
+
+    this.selectedNodeId = null
+    this.hideOverlay()
+    this.selectedEdgeId = edgeId
+    this.graph.setSelected(edgeId)
+    this.showEdgeEditor(edgeId)
+  }
+
+  onCanvasDeselect() {
+    if (this.editingNodeId) this.commitEdit()
+    if (this.editingEdgeId) this.commitEdgeEdit()
+    this.cancelLinkMode()
+    this.selectedNodeId = null
+    this.clearEdgeSelection()
+    this.hideOverlay()
+    this.graph.setSelected(null)
+  }
+
+  onStoreUpdate() {
+    if (this.selectedNodeId && !this.store.getNode(this.selectedNodeId)) {
+      this.selectedNodeId = null
+      this.editingNodeId = null
+      this.hideOverlay()
+    }
+    if (this.selectedEdgeId && !this.store.getEdge(this.selectedEdgeId)) {
+      this.clearEdgeSelection()
+    }
+    if (this.linkSourceId && !this.store.getNode(this.linkSourceId)) {
+      this.cancelLinkMode()
+    }
+    if (this.editingEdgeId && document.activeElement === this.edgeInput) {
+      this._updateEdgeOverlayPosition(this.editingEdgeId)
+      return
+    }
+    if (this.editingNodeId && document.activeElement === this.nodeInput) {
+      this._updateOverlayPosition(this.editingNodeId)
+      return
+    }
+    if (this.selectedEdgeId) this.showEdgeEditor(this.selectedEdgeId)
+  }
+
+  // === 私有方法 ===
+
+  _applyGraphHistory(action) {
+    const keepNodeId = this.selectedNodeId
+    const wasEditing = !!this.editingNodeId
+    this.editingNodeId = null
 
     const ok = action()
     if (!ok) return false
 
-    if (keepNodeId && store.getNode(keepNodeId)) {
-      selectedNodeId = keepNodeId
-      graph.setSelected(keepNodeId)
-      if (wasEditing) startEdit(keepNodeId)
-      else hideOverlay()
+    if (keepNodeId && this.store.getNode(keepNodeId)) {
+      this.selectedNodeId = keepNodeId
+      this.graph.setSelected(keepNodeId)
+      if (wasEditing) this.startEdit(keepNodeId)
+      else this.hideOverlay()
       return true
     }
 
-    const nodes = store.getAllNodes()
+    const nodes = this.store.getAllNodes()
     if (nodes.length > 0) {
-      selectedNodeId = nodes[0].id
-      graph.setSelected(selectedNodeId)
-      hideOverlay()
+      this.selectedNodeId = nodes[0].id
+      this.graph.setSelected(this.selectedNodeId)
+      this.hideOverlay()
     } else {
-      selectedNodeId = null
-      hideOverlay()
-      graph.setSelected(null)
+      this.selectedNodeId = null
+      this.hideOverlay()
+      this.graph.setSelected(null)
     }
     return true
   }
-
-  function handleUndo() {
-    if (editingNodeId) {
-      if (undoText()) return
-      applyGraphHistory(() => store.undo())
-      return
-    }
-    applyGraphHistory(() => store.undo())
-  }
-
-  function handleRedo() {
-    if (editingNodeId) {
-      if (redoText()) return
-      applyGraphHistory(() => store.redo())
-      return
-    }
-    applyGraphHistory(() => store.redo())
-  }
-
-  function beginEditNode(nodeId) {
-    selectNode(nodeId)
-    startEdit(nodeId)
-    requestAnimationFrame(() => {
-      if (editingNodeId === nodeId) updateOverlayPosition(nodeId)
-    })
-  }
-
-  function resolveNodePosition(nodeId) {
-    let stored = store.getStoredNodePosition(nodeId)
-    if (!stored) {
-      stored = graph.getViewportCenter()
-      store.setNodePosition(nodeId, stored.x, stored.y, { silent: true })
-    }
-    graph.applyNodePosition(nodeId, stored, { silent: true })
-    return stored
-  }
-
-  function createChild(fromId = selectedNodeId) {
-    if (!fromId) return null
-    if (!commitEdit()) return null
-
-    const parentPos = resolveNodePosition(fromId)
-    store.setNodePosition(fromId, parentPos.x, parentPos.y, { silent: true })
-    const childIndex = graph.getOutgoingChildCount(fromId)
-    const position = graph.computeChildPositionAt(parentPos, childIndex)
-    if (!position) return null
-
-    const childId = store.addChildNode(fromId, '新节点', (id) => {
-      graph.applyNodePosition(id, position, { silent: true })
-    })
-    graph.panToNodeIfNeeded(childId)
-    beginEditNode(childId)
-    return childId
-  }
-
-  function createSibling(fromId = selectedNodeId) {
-    if (!fromId) return null
-    if (!commitEdit()) return null
-
-    const parentId = store.getParentId(fromId) ?? fromId
-    const parentPos = resolveNodePosition(parentId)
-    const siblingIndex = graph.getOutgoingChildCount(parentId)
-    const position = graph.computeChildPositionAt(parentPos, siblingIndex)
-    store.setNodePosition(parentId, parentPos.x, parentPos.y, { silent: true })
-    if (!position) return null
-
-    const siblingId = store.addSiblingNode(fromId, '新节点', (id) => {
-      graph.applyNodePosition(id, position, { silent: true })
-    })
-    graph.panToNodeIfNeeded(siblingId)
-    beginEditNode(siblingId)
-    return siblingId
-  }
-
-  function deleteSelected() {
-    if (selectedEdgeId && !isInputFocused()) {
-      deleteSelectedEdge()
-      return
-    }
-    if (!selectedNodeId || isInputFocused()) return
-    const node = store.getNode(selectedNodeId)
-    if (!node) return
-
-    store.deleteNode(selectedNodeId)
-    selectedNodeId = null
-    hideOverlay()
-    graph.setSelected(null)
-  }
-
-  function onNodeSelect(nodeId, { shiftLink = false } = {}) {
-    if (linkSourceId) {
-      if (linkSourceId === nodeId) {
-        cancelLinkMode()
-        showToast('已取消关联')
-        return
-      }
-      linkNodes(linkSourceId, nodeId)
-      return
-    }
-
-    if (shiftLink && selectedNodeId && selectedNodeId !== nodeId) {
-      linkNodes(selectedNodeId, nodeId)
-      return
-    }
-
-    if (editingNodeId && editingNodeId !== nodeId) {
-      if (!commitEdit()) {
-        nodeInput.value = editStartLabel
-        stopEdit()
-      }
-    }
-    if (editingEdgeId) commitEdgeEdit()
-
-    clearEdgeSelection()
-    cancelLinkMode()
-    selectedNodeId = nodeId
-    graph.setSelected(nodeId)
-    hideOverlay()
-  }
-
-  function onEdgeSelect(edgeId) {
-    if (editingNodeId) commitEdit()
-    cancelLinkMode()
-
-    selectedNodeId = null
-    hideOverlay()
-    selectedEdgeId = edgeId
-    graph.setSelected(edgeId)
-    showEdgeEditor(edgeId)
-  }
-
-  function onCanvasDeselect() {
-    if (editingNodeId) commitEdit()
-    if (editingEdgeId) commitEdgeEdit()
-    cancelLinkMode()
-    selectedNodeId = null
-    clearEdgeSelection()
-    hideOverlay()
-    graph.setSelected(null)
-  }
-
-  function onStoreUpdate() {
-    if (selectedNodeId && !store.getNode(selectedNodeId)) {
-      selectedNodeId = null
-      editingNodeId = null
-      hideOverlay()
-    }
-    if (selectedEdgeId && !store.getEdge(selectedEdgeId)) {
-      clearEdgeSelection()
-    }
-    if (linkSourceId && !store.getNode(linkSourceId)) {
-      cancelLinkMode()
-    }
-    if (editingEdgeId && document.activeElement === edgeInput) {
-      updateEdgeOverlayPosition(editingEdgeId)
-      return
-    }
-    if (editingNodeId && document.activeElement === nodeInput) {
-      updateOverlayPosition(editingNodeId)
-      return
-    }
-    if (selectedEdgeId) showEdgeEditor(selectedEdgeId)
-  }
-
-  edgeInput.addEventListener('mousedown', (e) => {
-    if (!editingEdgeId && selectedEdgeId) {
-      e.preventDefault()
-      startEdgeEdit(selectedEdgeId)
-    }
-  })
-
-  edgeInput.addEventListener('keydown', (e) => {
-    if (isComposing) return
-    if (isUndoShortcut(e)) return
-
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      commitEdgeEdit()
-      return
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      const edge = selectedEdgeId ? store.getEdge(selectedEdgeId) : null
-      if (edge) edgeInput.value = edge.type
-      editingEdgeId = null
-      edgeInput.readOnly = true
-      edgeOverlay.classList.remove('editing')
-      edgeInput.blur()
-    }
-  })
-
-  edgeInput.addEventListener('blur', () => {
-    if (editingEdgeId) commitEdgeEdit()
-    editingEdgeId = null
-  })
-
-  nodeInput.addEventListener('input', () => {
-    if (editingNodeId) recordTextState()
-  })
-
-  nodeInput.addEventListener('compositionstart', () => {
-    isComposing = true
-  })
-  nodeInput.addEventListener('compositionend', () => {
-    isComposing = false
-    if (editingNodeId) recordTextState()
-  })
-
-  nodeInput.addEventListener('keydown', (e) => {
-    if (isComposing) return
-
-    if (isUndoShortcut(e)) {
-      e.preventDefault()
-      if (e.shiftKey) handleRedo()
-      else handleUndo()
-      return
-    }
-
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      createChild()
-      return
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      if (commitEdit()) createSibling()
-      return
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      nodeInput.value = editStartLabel
-      resetTextHistory(editStartLabel)
-      stopEdit()
-      return
-    }
-  })
-
-  nodeInput.addEventListener('blur', () => {
-    if (editingNodeId) commitEdit()
-    editingNodeId = null
-  })
-
-  document.addEventListener('keydown', (e) => {
-    if (isBlockedTarget(e.target)) return
-    if (isComposing) return
-
-    if (isUndoShortcut(e)) {
-      if (isInputFocused() && editingNodeId) return
-      e.preventDefault()
-      if (e.shiftKey) handleRedo()
-      else handleUndo()
-      return
-    }
-
-    if (e.key === 'l' || e.key === 'L') {
-      if (!isInputFocused()) {
-        e.preventDefault()
-        startLinkMode()
-      }
-      return
-    }
-
-    if (e.key === 'Escape' && !isInputFocused()) {
-      if (linkSourceId) {
-        e.preventDefault()
-        cancelLinkMode()
-        showToast('已取消关联')
-        return
-      }
-    }
-
-    if (e.key === 'Tab' && !isInputFocused()) {
-      e.preventDefault()
-      if (!selectedNodeId) {
-        const nodes = store.getAllNodes()
-        if (nodes.length === 0) {
-          const id = store.addChildNode(null, '新节点', (nodeId) => {
-            graph.applyViewportCenterPosition(nodeId, { silent: true })
-          })
-          beginEditNode(id)
-        } else {
-          selectNode(nodes[0].id)
-          createChild(nodes[0].id)
-        }
-      } else {
-        createChild()
-      }
-      return
-    }
-
-    if (e.key === 'Enter' && !isInputFocused()) {
-      e.preventDefault()
-      if (selectedEdgeId) startEdgeEdit()
-      else if (selectedNodeId) startEdit()
-      return
-    }
-
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInputFocused()) {
-      e.preventDefault()
-      deleteSelected()
-      return
-    }
-
-    if (
-      selectedNodeId &&
-      !editingNodeId &&
-      !isInputFocused() &&
-      e.key.length === 1 &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey
-    ) {
-      e.preventDefault()
-      startEdit()
-      nodeInput.value = e.key
-      resetTextHistory(e.key)
-      nodeInput.setSelectionRange(1, 1)
-    }
-  })
-
-  graph.cy.on('dbltap', 'node', (evt) => {
-    startEdit(evt.target.id())
-  })
-
-  graph.cy.on('dbltap', 'edge', (evt) => {
-    onEdgeSelect(evt.target.id())
-    startEdgeEdit(evt.target.id())
-  })
-
-  graph.cy.on('pan zoom resize', () => {
-    if (editingNodeId && overlay.classList.contains('visible')) {
-      updateOverlayPosition(editingNodeId)
-    }
-    if (selectedEdgeId && edgeOverlay.classList.contains('visible')) {
-      updateEdgeOverlayPosition(selectedEdgeId)
-    }
-  })
-
-  return { onNodeSelect, onEdgeSelect, onCanvasDeselect, onStoreUpdate, selectNode, deselect }
-}
-
-function showToast(message, isError = false) {
-  const toast = document.getElementById('toast')
-  toast.textContent = message
-  toast.className = `toast show${isError ? ' error' : ''}`
-  clearTimeout(showToast._timer)
-  showToast._timer = setTimeout(() => {
-    toast.className = 'toast'
-  }, 2500)
 }

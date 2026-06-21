@@ -8,10 +8,9 @@
   <body>
     <div id="app">
       <div id="graph-pane" class="graph-pane">
-        <div id="cy">
-          <div class="canvas-hint">
-            普通拖拽移动视角 · 按住 <kbd>Space</kbd> 拖拽节点/家族 · <kbd>Tab</kbd> 子节点 · <kbd>Shift+点击</kbd> 关联 · <kbd>L</kbd> 关联模式 · <kbd>Enter</kbd> 编辑 · <kbd>Del</kbd> 删除
-          </div>
+        <div id="cy"></div>
+        <div id="minimap" class="minimap">
+          <div class="minimap-viewport"></div>
         </div>
         <div id="editor-layer" class="editor-layer"></div>
       </div>
@@ -27,6 +26,7 @@
 
         <div class="tabs">
           <button class="tab active" data-tab="shortcuts">操作</button>
+          <button class="tab" data-tab="tree">节点</button>
           <button class="tab" data-tab="keys">快捷键</button>
           <button class="tab" data-tab="data">数据</button>
         </div>
@@ -44,6 +44,15 @@
           <button class="btn btn-block" id="btn-reset-view">显示全部</button>
         </div>
 
+        <div id="panel-tree" class="tab-panel">
+          <h3>节点列表</h3>
+          <div id="tree-toolbar" class="tree-toolbar">
+            <button class="btn btn-icon btn-sm" id="btn-tree-toggle" title="展开/收起全部">⊟</button>
+            <input type="text" id="tree-search-input" placeholder="搜索节点..." />
+          </div>
+          <div id="tree-view" class="tree-view"></div>
+        </div>
+
         <div id="panel-keys" class="tab-panel">
           <h3>键盘操作</h3>
           <p class="hint">点击节点选中，直接在图上编辑，无需填表单</p>
@@ -51,6 +60,7 @@
             <li><span class="shortcut-desc">移动视角</span><span class="shortcut-keys">普通拖拽画布</span></li>
             <li><span class="shortcut-desc">拖拽节点 / 家族</span><span class="shortcut-keys">按住 <kbd>Space</kbd> + 拖拽</span></li>
             <li><span class="shortcut-desc">关联两个节点</span><span class="shortcut-keys"><kbd>Shift+点击</kbd> / <kbd>L</kbd></span></li>
+            <li><span class="shortcut-desc">节点归入家族</span><span class="shortcut-keys">选中家族 · <kbd>Shift+点击</kbd> 目标</span></li>
             <li><span class="shortcut-desc">编辑关系类型</span><span class="shortcut-keys"><kbd>Enter</kbd> / 双击连线</span></li>
             <li><span class="shortcut-desc">删除关系</span><span class="shortcut-keys">选中连线 · <kbd>Del</kbd></span></li>
             <li><span class="shortcut-desc">创建子节点</span><span class="shortcut-keys"><kbd>Tab</kbd></span></li>
