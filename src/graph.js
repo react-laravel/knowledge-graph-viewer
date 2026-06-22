@@ -33,8 +33,6 @@ export class GraphManager {
       wheelSensitivity: 0.3,
     })
 
-    this._onSelect = options.onSelect || null
-
     this._initDragMode()
     this._initEvents()
     this._initMinimap()
@@ -452,6 +450,8 @@ export class GraphManager {
   setSelected(id) {
     this.cy.elements().removeClass('selected')
     if (id) this.cy.getElementById(id).addClass('selected')
+    // 注意：不触发 _onSelect，避免和 onCanvasDeselect 形成循环调用
+    // 选中同步由 Cytoscape tap 事件处理
   }
 
   setNodeEditing(nodeId, editing) {

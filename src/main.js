@@ -18,9 +18,13 @@ export class App {
     this.graph = new GraphManager(cyContainer, {
       onSelect: (selection) => this.ui?.onSelect(selection),
     })
+    // 暴露 cytoscape 实例到全局，方便测试和调试
+    window.cy = this.graph.cy
 
     this.editor = new InlineEditor(this.store, this.graph)
     this.ui = new SidebarPanel(this.store, this.graph, this.editor)
+    // 暴露 cytoscape 实例到全局，方便测试和调试
+    window.cy = this.graph.cy
 
     // 监听 store 变化
     this.store.subscribe(() => {
@@ -147,6 +151,8 @@ export class App {
         this.editor.selectNode(nodeId)
         this.graph.setSelected(nodeId)
         this.graph.focusNode(nodeId)
+        // 直接更新树视图选中状态（不走 _onSelect 回调，避免循环）
+        this.ui.onSelect({ type: 'node', id: nodeId })
       },
       editNode: (nodeId) => {
         this.editor.selectNode(nodeId)

@@ -155,6 +155,10 @@ export class InlineEditor {
           InlineEditor.showToast('已取消关联')
           return
         }
+        // 没有 link mode 时，取消当前选中
+        e.preventDefault()
+        this.onCanvasDeselect()
+        return
       }
 
       if (e.key === 'Tab' && !this._isInputFocused()) {

@@ -292,7 +292,7 @@ export class SidebarPanel {
 
     return `
       <div class="tree-node ${selectedClass}" data-id="${node.id}" style="padding-left: ${6 + depth * 16}px">
-        <span class="tree-toggle ${toggleClass}" data-toggle="${node.id}"${hasChildren ? ` onclick="window._kgToggle('${node.id}')"` : ''}>${toggleIcon}</span>
+        <span class="tree-toggle ${toggleClass}" data-toggle="${node.id}"${hasChildren ? ` onclick="event.stopPropagation();window._kgToggle('${node.id}')"` : ''}>${toggleIcon}</span>
         <span class="${labelClass}" data-select="${node.id}">${SidebarPanel.escapeHtml(node.label)}</span>
         <span class="tree-actions">
           <button class="tree-btn" data-edit="${node.id}" title="编辑">✎</button>
@@ -326,10 +326,11 @@ export class SidebarPanel {
     }
 
     this.treeView.addEventListener('click', (e) => {
-      // 选择节点
+      // 选择节点：点击 data-select span 或 tree-node div 本身
       const label = e.target.closest('[data-select]')
-      if (label) {
-        const nodeId = label.dataset.select
+      const treeNode = !label ? e.target.closest('.tree-node') : null
+      if (label || treeNode) {
+        const nodeId = (label || treeNode).dataset.select || treeNode.dataset.id
         if (window.kgStore) window.kgStore.selectAndFocus(nodeId)
         return
       }
