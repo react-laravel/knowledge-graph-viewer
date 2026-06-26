@@ -85,6 +85,7 @@ export const rawGraph = {
     { id: '紫鹃', label: '紫鹃' },
     { id: '莺儿', label: '莺儿' },
     { id: '司棋', label: '司棋' },
+    { id: '潘又安', label: '潘又安' },
     { id: '侍书', label: '侍书' },
     { id: '入画', label: '入画' },
     { id: '雪雁', label: '雪雁' },
@@ -103,10 +104,19 @@ export const rawGraph = {
 
     // 其他重要人物
     { id: '刘姥姥', label: '刘姥姥' },
+    { id: '板儿', label: '板儿' },
     { id: '柳湘莲', label: '柳湘莲' },
     { id: '蒋玉菡', label: '蒋玉菡' },
     { id: '贾雨村', label: '贾雨村' },
     { id: '甄士隐', label: '甄士隐' },
+
+    // 宝玉好友与相关人物
+    { id: '秦钟', label: '秦钟' },
+    { id: '智能儿', label: '智能儿' },
+    { id: '北静王', label: '北静王' },
+    { id: '张道士', label: '张道士' },
+    { id: '冯紫英', label: '冯紫英' },
+    { id: '傅秋芳', label: '傅秋芳' },
   ],
   edges: [
     // 四大家族归属
@@ -165,6 +175,9 @@ export const rawGraph = {
     { id: 'e22f', source: '尤老娘', target: '尤三姐', type: '母女' },
     { id: 'e22g', source: '尤氏', target: '尤二姐', type: '异母姐妹' },
     { id: 'e22h', source: '尤氏', target: '尤三姐', type: '异母姐妹' },
+    { id: 'e22i', source: '尤老娘', target: '尤氏', type: '母女' },
+    { id: 'e23', source: '秦可卿', target: '秦钟', type: '姐弟' },
+    { id: 'e23b', source: '贾宝玉', target: '秦钟', type: '好友' },
 
     // 赦房
     { id: 'e24', source: '贾赦', target: '邢夫人', type: '夫妻' },
@@ -182,8 +195,12 @@ export const rawGraph = {
     { id: 'e34', source: '王夫人', target: '贾探春', type: '嫡母' },
     { id: 'e35', source: '赵姨娘', target: '贾环', type: '母子' },
     { id: 'e36', source: '赵姨娘', target: '贾探春', type: '母女' },
+    { id: 'e36b', source: '贾宝玉', target: '贾环', type: '兄弟' },
+    { id: 'e36c', source: '王夫人', target: '贾环', type: '嫡母' },
     { id: 'e37', source: '贾珠', target: '李纨', type: '夫妻' },
     { id: 'e38', source: '李纨', target: '贾兰', type: '母子' },
+    { id: 'e38b', source: '贾政', target: '贾兰', type: '祖孙' },
+    { id: 'e38c', source: '贾宝玉', target: '贾兰', type: '堂兄弟' },
 
     // 琏凤房
     { id: 'e39', source: '贾琏', target: '王熙凤', type: '夫妻' },
@@ -194,6 +211,7 @@ export const rawGraph = {
     { id: 'e44', source: '王熙凤', target: '尤二姐', type: '迫害' },
     { id: 'e45', source: '贾琏', target: '尤二姐', type: '偷娶' },
     { id: 'e45b', source: '贾琏', target: '贾芸', type: '族叔侄' },
+    { id: 'e45ba', source: '贾宝玉', target: '贾芸', type: '族叔侄' },
     { id: 'e45c', source: '王熙凤', target: '贾芸', type: '提携' },
     { id: 'e45d', source: '王熙凤', target: '旺儿', type: '主仆' },
     { id: 'e45e', source: '王熙凤', target: '来旺家的', type: '主仆' },
@@ -226,10 +244,15 @@ export const rawGraph = {
     { id: 'e58', source: '贾宝玉', target: '史湘云', type: '兄妹情' },
     { id: 'e59', source: '贾宝玉', target: '秦可卿', type: '仰慕' },
     { id: 'e60', source: '贾宝玉', target: '妙玉', type: '知己' },
+    { id: 'e60b', source: '贾宝玉', target: '柳湘莲', type: '朋友' },
+    { id: 'e60c', source: '贾宝玉', target: '北静王', type: '知己' },
+    { id: 'e60d', source: '贾宝玉', target: '冯紫英', type: '朋友' },
+    { id: 'e60e', source: '贾政', target: '张道士', type: '相交' },
 
     // 其他感情线
     { id: 'e61', source: '尤三姐', target: '柳湘莲', type: '殉情' },
     { id: 'e62', source: '蒋玉菡', target: '袭人', type: '归宿' },
+    { id: 'e63', source: '秦钟', target: '智能儿', type: '情侣' },
 
     // 宝玉丫鬟
     { id: 'e64', source: '贾宝玉', target: '袭人', type: '贴身丫鬟' },
@@ -245,6 +268,7 @@ export const rawGraph = {
     { id: 'e72', source: '薛宝钗', target: '莺儿', type: '丫鬟' },
     { id: 'e73', source: '贾探春', target: '侍书', type: '丫鬟' },
     { id: 'e74', source: '贾探春', target: '司棋', type: '丫鬟' },
+    { id: 'e74b', source: '贾迎春', target: '司棋', type: '丫鬟' },
     { id: 'e75', source: '贾惜春', target: '入画', type: '丫鬟' },
     { id: 'e75b', source: '王夫人', target: '金钏', type: '丫鬟' },
     { id: 'e75c', source: '王夫人', target: '玉钏', type: '丫鬟' },
@@ -267,12 +291,20 @@ export const rawGraph = {
     // 管理与人际
     { id: 'e84', source: '刘姥姥', target: '贾母', type: '拜访' },
     { id: 'e85', source: '刘姥姥', target: '王熙凤', type: '求助' },
+    { id: 'e85b', source: '刘姥姥', target: '板儿', type: '祖孙' },
+    { id: 'e85c', source: '板儿', target: '贾巧姐', type: '婚姻' },
     { id: 'e86', source: '贾雨村', target: '甄士隐', type: '恩人' },
     { id: 'e87', source: '贾雨村', target: '林黛玉', type: '师生' },
+
+    // 司棋与潘又安
+    { id: 'e-panyouan', source: '潘又安', target: '司棋', type: '情侣' },
 
     // 四春亲属
     { id: 'e89', source: '贾迎春', target: '邢夫人', type: '嫡母' },
     { id: 'e90', source: '贾惜春', target: '贾珍', type: '兄妹' },
+    { id: 'e90b', source: '贾母', target: '贾惜春', type: '祖孙' },
+    { id: 'e90c', source: '贾政', target: '贾惜春', type: '叔侄' },
+    { id: 'e90d', source: '王夫人', target: '贾惜春', type: '抚养' },
     { id: 'e91', source: '贾赦', target: '贾探春', type: '伯侄' },
     { id: 'e92', source: '贾探春', target: '贾迎春', type: '姐妹' },
     { id: 'e93', source: '贾探春', target: '贾惜春', type: '姐妹' },
@@ -281,5 +313,8 @@ export const rawGraph = {
     { id: 'e97', source: '邢岫烟', target: '贾迎春', type: '表姐妹' },
     { id: 'e98', source: '薛宝琴', target: '史湘云', type: '姐妹' },
     { id: 'e99', source: '妙玉', target: '贾母', type: '寄居' },
+
+    // 宝玉与其他重要人物
+    { id: 'e100', source: '贾宝玉', target: '傅秋芳', type: '婚约' },
   ],
 }
