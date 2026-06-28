@@ -116,7 +116,38 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await page.waitForTimeout(500)
   })
 
-  test('Esc 应该取消选择', async ({ page }) => {
+  test('点击画布上的节点应该能选中', async ({ page }) => {
+    // 等布局完成
+    await page.waitForTimeout(1500)
+
+    // 用 cytoscape 实例找到第一个节点位置并点击
+    const clicked = await page.evaluate(() => {
+      const node = window.cy?.nodes().first()
+      if (!node || node.empty()) return false
+      const pos = node.renderedPosition()
+      const canvas = document.querySelector('#cy canvas')
+      if (!canvas) return false
+      const rect = canvas.getBoundingClientRect()
+      const x = rect.left + pos.x
+      const y = rect.top + pos.y
+      const evt = new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })
+      canvas.dispatchEvent(evt)
+      const evt2 = new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y })
+      canvas.dispatchEvent(evt2)
+      return true
+    })
+
+    if (!clicked) return
+
+    // 验证节点被选中（Cytoscape 的 selected class 或 _onSelect 被调用）
+    await page.waitForTimeout(300)
+    const hasSelection = await page.evaluate(() => {
+      return window.cy?.$('node.selected').length > 0 || window.cy?.$('edge.selected').length > 0
+    })
+    expect(hasSelection).toBe(true)
+  })
+
+  test('Esc 应该取消选择', async ({ page }) {
     // 先选中一个节点
     await page.click('.tab[data-tab="tree"]')
     const firstNode = page.locator('#tree-view .tree-node').first()

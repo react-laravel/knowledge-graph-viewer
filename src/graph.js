@@ -24,6 +24,7 @@ export class GraphManager {
     this.container = container
     this.spacePressed = false
     this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS }
+    this._onSelect = options.onSelect
 
     this.cy = cytoscape({
       container,
