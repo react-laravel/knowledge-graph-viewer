@@ -236,6 +236,7 @@ export const rawGraph = {
     { id: 'e55c', source: '薛蝌', target: '邢岫烟', type: '未婚夫妻' },
     { id: 'e55d', source: '薛宝钗', target: '薛宝琴', type: '堂姐妹' },
     { id: 'e55e', source: '薛蟠', target: '薛蝌', type: '堂兄弟' },
+    { id: 'e55g', source: '薛蟠', target: '薛宝琴', type: '堂兄妹' },
     { id: 'e55f', source: '夏金桂', target: '香菱', type: '迫害' },
 
     // 宝玉情感主线

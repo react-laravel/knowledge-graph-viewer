@@ -25,10 +25,13 @@ export class GraphManager {
     this.spacePressed = false
     this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS }
     this._onSelect = options.onSelect
+    this._showEdgeLabels = false
+    this._hoverHighlight = true
+    this._themeMode = options.themeMode === 'dark' ? 'dark' : 'light'
 
     this.cy = cytoscape({
       container,
-      style: STYLES,
+      style: buildStyles(false, this._themeMode),
       minZoom: 0.2,
       maxZoom: 3,
       wheelSensitivity: 0.3,
@@ -37,6 +40,12 @@ export class GraphManager {
     this._initDragMode()
     this._initEvents()
     this._initMinimap()
+  }
+
+  setThemeMode(themeMode) {
+    this._themeMode = themeMode === 'dark' ? 'dark' : 'light'
+    this.cy.style(buildStyles(this._showEdgeLabels, this._themeMode))
+    this._scheduleMinimapDraw()
   }
 
   // === 小地图 ===
@@ -49,12 +58,10 @@ export class GraphManager {
     this.minimapEl.appendChild(this.minimapCanvas)
     this.minimapCtx = this.minimapCanvas.getContext('2d')
 
-    // 监听主图变化更新小地图
-    this.cy.on('pan zoom', () => this._drawMinimap())
-    this.cy.on('add remove', () => this._drawMinimap())
-    this.cy.on('layoutstop', () => this._drawMinimap())
+    this.cy.on('pan zoom', () => this._scheduleMinimapDraw())
+    this.cy.on('add remove', () => this._scheduleMinimapDraw())
+    this.cy.on('layoutstop', () => this._scheduleMinimapDraw())
 
-    // 点击小地图跳转
     this.minimapEl.addEventListener('click', (e) => {
       const rect = this.minimapEl.getBoundingClientRect()
       const x = e.clientX - rect.left
@@ -62,32 +69,66 @@ export class GraphManager {
       this._navigateToMinimapPoint(x, y, rect.width, rect.height)
     })
 
-    // 初始绘制
-    this._drawMinimap()
+    if (typeof ResizeObserver !== 'undefined') {
+      this._minimapResizeObserver = new ResizeObserver(() => this._scheduleMinimapDraw())
+      this._minimapResizeObserver.observe(this.minimapEl)
+    }
+
+    this._scheduleMinimapDraw()
+  }
+
+  _scheduleMinimapDraw() {
+    if (!this.minimapCanvas) return
+    if (this._minimapRaf) cancelAnimationFrame(this._minimapRaf)
+    this._minimapRaf = requestAnimationFrame(() => {
+      this._minimapRaf = null
+      this._drawMinimap()
+    })
+  }
+
+  _isFinitePos(pos) {
+    return pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)
+  }
+
+  /** 小地图与主图共用 applyVisibility 计算出的可见集合 */
+  _getMinimapElements() {
+    if (this._lastVisibleNodeIds?.size) {
+      const nodes = this.cy.nodes().filter((n) => this._lastVisibleNodeIds.has(n.id()))
+      const edges = this.cy.edges().filter((e) => this._lastVisibleEdgeIds?.has(e.id()))
+      const col = nodes.union(edges)
+      if (col.length > 0) return col
+    }
+    const visible = this.cy.elements().not('.kg-hidden')
+    return visible.length > 0 ? visible : this.cy.elements()
+  }
+
+  /** 将视口对准当前可见节点（避免全图布局后可见节点散落在画布外） */
+  fitToVisibleNodes(visibleNodeIds) {
+    const allowed = visibleNodeIds instanceof Set ? visibleNodeIds : new Set(visibleNodeIds ?? [])
+    if (!allowed.size) return
+    const eles = this.cy.nodes().filter((n) => allowed.has(n.id()) && !n.hasClass('kg-hidden'))
+    if (eles.empty()) return
+    this.cy.fit(eles, 60)
   }
 
   _getGraphBounds() {
-    const nodes = this.cy.nodes()
+    const nodes = this._getMinimapElements().nodes().filter((n) => this._isFinitePos(n.position()))
     if (nodes.length === 0) return { x: 0, y: 0, w: 100, h: 100 }
 
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity
-    nodes.forEach((n) => {
-      const pos = n.position()
-      minX = Math.min(minX, pos.x)
-      minY = Math.min(minY, pos.y)
-      maxX = Math.max(maxX, pos.x)
-      maxY = Math.max(maxY, pos.y)
-    })
-
-    const padding = 80
+    const bb = nodes.boundingBox()
+    const padding = 40
     return {
-      x: minX - padding,
-      y: minY - padding,
-      w: maxX - minX + padding * 2 || 100,
-      h: maxY - minY + padding * 2 || 100,
+      x: bb.x1 - padding,
+      y: bb.y1 - padding,
+      w: Math.max(bb.w + padding * 2, 50),
+      h: Math.max(bb.h + padding * 2, 50),
+    }
+  }
+
+  _mapToMinimap(x, y, bounds, scale, offsetX, offsetY) {
+    return {
+      x: (x - bounds.x) * scale + offsetX,
+      y: (y - bounds.y) * scale + offsetY,
     }
   }
 
@@ -98,6 +139,7 @@ export class GraphManager {
     const dpr = window.devicePixelRatio || 1
     const w = rect.width
     const h = rect.height
+    if (w <= 0 || h <= 0) return
 
     this.minimapCanvas.width = w * dpr
     this.minimapCanvas.height = h * dpr
@@ -105,126 +147,140 @@ export class GraphManager {
     this.minimapCanvas.style.height = h + 'px'
 
     const ctx = this.minimapCtx
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.save()
     ctx.scale(dpr, dpr)
     ctx.clearRect(0, 0, w, h)
 
-    if (this.cy.nodes().length === 0) {
+    const eles = this._getMinimapElements()
+    if (eles.nodes().length === 0) {
       ctx.restore()
       return
     }
 
     const bounds = this._getGraphBounds()
-    const scaleX = w / bounds.w
-    const scaleY = h / bounds.h
-    const scale = Math.min(scaleX, scaleY)
+    if (!Number.isFinite(bounds.w) || !Number.isFinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0) {
+      ctx.restore()
+      return
+    }
 
+    const scale = Math.min(w / bounds.w, h / bounds.h)
     const offsetX = (w - bounds.w * scale) / 2
     const offsetY = (h - bounds.h * scale) / 2
 
+    const mapPoint = (x, y) => this._mapToMinimap(x, y, bounds, scale, offsetX, offsetY)
+
+    const palette = this._getMinimapPalette()
+
     // 绘制边
-    ctx.strokeStyle = '#ccc'
-    ctx.lineWidth = 0.5
-    this.cy.edges().forEach((e) => {
+    ctx.strokeStyle = palette.edge
+    ctx.lineWidth = 0.6
+    eles.edges().forEach((e) => {
       const src = e.source().position()
       const tgt = e.target().position()
+      if (!this._isFinitePos(src) || !this._isFinitePos(tgt)) return
+      const p1 = mapPoint(src.x, src.y)
+      const p2 = mapPoint(tgt.x, tgt.y)
+      if (!Number.isFinite(p1.x) || !Number.isFinite(p1.y) || !Number.isFinite(p2.x) || !Number.isFinite(p2.y)) {
+        return
+      }
       ctx.beginPath()
-      ctx.moveTo((src.x - bounds.x) * scale + offsetX, (src.y - bounds.y) * scale + offsetY)
-      ctx.lineTo((tgt.x - bounds.x) * scale + offsetX, (tgt.y - bounds.y) * scale + offsetY)
+      ctx.moveTo(p1.x, p1.y)
+      ctx.lineTo(p2.x, p2.y)
       ctx.stroke()
     })
 
-    // 绘制节点
-    this.cy.nodes().forEach((n) => {
-      if (n.isParent()) {
-        // 父节点：从子节点边界 + 自身 padding 计算图空间矩形
-        const children = n.children()
-        const pos = n.position()
-        let minX = Infinity,
-          minY = Infinity,
-          maxX = -Infinity,
-          maxY = -Infinity
-        if (children.length > 0) {
-          children.forEach((c) => {
-            const p = c.position()
-            const bb = c.renderedBoundingBox()
-            // 用 renderedBoundingBox 在 1:1 zoom 下的尺寸估算
-            const hw = bb.w / (this.cy.zoom() || 1) / 2
-            const hh = bb.h / (this.cy.zoom() || 1) / 2
-            minX = Math.min(minX, p.x - hw)
-            minY = Math.min(minY, p.y - hh)
-            maxX = Math.max(maxX, p.x + hw)
-            maxY = Math.max(maxY, p.y + hh)
-          })
-        } else {
-          minX = pos.x - 30
-          minY = pos.y - 20
-          maxX = pos.x + 30
-          maxY = pos.y + 20
-        }
-        const pad = 24
-        minX -= pad
-        minY -= pad
-        maxX += pad
-        maxY += pad
+    // 绘制 compound 父框
+    eles.nodes().filter((n) => n.isParent()).forEach((n) => {
+      const children = n.children().not('.kg-hidden')
+      const boxNodes = children.length > 0 ? children : n.children()
+      if (boxNodes.length === 0) return
+      const finiteChildren = boxNodes.filter((c) => this._isFinitePos(c.position()))
+      if (finiteChildren.length === 0) return
 
-        const x = (minX - bounds.x) * scale + offsetX
-        const y = (minY - bounds.y) * scale + offsetY
-        const w = (maxX - minX) * scale
-        const h = (maxY - minY) * scale
+      const bb = finiteChildren.boundingBox()
+      const pad = 20
+      const minX = bb.x1 - pad
+      const minY = bb.y1 - pad
+      const maxX = bb.x2 + pad
+      const maxY = bb.y2 + pad
+      const p1 = mapPoint(minX, minY)
+      const rw = (maxX - minX) * scale
+      const rh = (maxY - minY) * scale
+      if (!Number.isFinite(p1.x) || !Number.isFinite(p1.y) || rw <= 0 || rh <= 0) return
 
-        ctx.fillStyle = 'rgba(139, 115, 85, 0.15)'
-        ctx.strokeStyle = '#b0a090'
-        ctx.lineWidth = 0.8
-        ctx.beginPath()
-        const rx = 3
-        const ry = 3
-        ctx.moveTo(x + rx, y)
-        ctx.lineTo(x + w - rx, y)
-        ctx.quadraticCurveTo(x + w, y, x + w, y + ry)
-        ctx.lineTo(x + w, y + h - ry)
-        ctx.quadraticCurveTo(x + w, y + h, x + w - rx, y + h)
-        ctx.lineTo(x + rx, y + h)
-        ctx.quadraticCurveTo(x, y + h, x, y + h - ry)
-        ctx.lineTo(x, y + ry)
-        ctx.quadraticCurveTo(x, y, x + rx, y)
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      } else {
-        // 普通节点画为圆点
-        const pos = n.position()
-        const x = (pos.x - bounds.x) * scale + offsetX
-        const y = (pos.y - bounds.y) * scale + offsetY
-        const r = 2
+      ctx.fillStyle = palette.groupFill
+      ctx.strokeStyle = palette.groupStroke
+      ctx.lineWidth = 0.8
+      ctx.beginPath()
+      ctx.roundRect(p1.x, p1.y, rw, rh, 3)
+      ctx.fill()
+      ctx.stroke()
+    })
 
-        ctx.fillStyle = n.hasClass('selected')
-          ? '#27ae60'
-          : n.hasClass('highlighted')
-            ? '#e74c3c'
-            : '#999'
-        ctx.beginPath()
-        ctx.arc(x, y, r, 0, Math.PI * 2)
-        ctx.fill()
-      }
+    // 绘制叶节点
+    eles.nodes().filter((n) => !n.isParent()).forEach((n) => {
+      const pos = n.position()
+      if (!this._isFinitePos(pos)) return
+      const p = mapPoint(pos.x, pos.y)
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return
+      const r = 2.5
+
+      ctx.fillStyle = n.hasClass('selected')
+        ? palette.selected
+        : n.hasClass('highlighted')
+          ? palette.highlighted
+          : palette.node
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+      ctx.fill()
     })
 
     // 绘制视口框
     const vp = this._getViewportRect(bounds, scale, offsetX, offsetY)
-    ctx.strokeStyle = '#4a90e2'
-    ctx.lineWidth = 1.5
-    ctx.fillStyle = 'rgba(74, 144, 226, 0.1)'
-    ctx.fillRect(vp.x, vp.y, vp.w, vp.h)
-    ctx.strokeRect(vp.x, vp.y, vp.w, vp.h)
+    if (Number.isFinite(vp.x) && Number.isFinite(vp.y) && vp.w > 0 && vp.h > 0) {
+      ctx.strokeStyle = palette.viewportStroke
+      ctx.lineWidth = 1.5
+      ctx.fillStyle = palette.viewportFill
+      ctx.fillRect(vp.x, vp.y, vp.w, vp.h)
+      ctx.strokeRect(vp.x, vp.y, vp.w, vp.h)
+    }
 
-    // 绘制缩放倍率
     const zoom = this.cy.zoom()
-    ctx.fillStyle = '#666'
+    ctx.fillStyle = palette.text
     ctx.font = '9px sans-serif'
     ctx.textAlign = 'right'
     ctx.fillText(Math.round(zoom * 100) + '%', w - 4, h - 4)
 
     ctx.restore()
+  }
+
+  _getMinimapPalette() {
+    if (this._themeMode === 'dark') {
+      return {
+        edge: '#4a5875',
+        groupFill: 'rgba(125, 146, 184, 0.18)',
+        groupStroke: '#5d6f90',
+        node: '#9ca9c4',
+        selected: '#67d391',
+        highlighted: '#ff7a7a',
+        viewportStroke: '#7aa2ff',
+        viewportFill: 'rgba(122, 162, 255, 0.16)',
+        text: '#9aa8c7',
+      }
+    }
+
+    return {
+      edge: '#bbb',
+      groupFill: 'rgba(139, 115, 85, 0.18)',
+      groupStroke: '#b0a090',
+      node: '#777',
+      selected: '#27ae60',
+      highlighted: '#e74c3c',
+      viewportStroke: '#4a90e2',
+      viewportFill: 'rgba(74, 144, 226, 0.12)',
+      text: '#666',
+    }
   }
 
   _getViewportRect(bounds, scale, offsetX, offsetY) {
@@ -317,66 +373,37 @@ export class GraphManager {
   // === 事件 ===
 
   _initEvents() {
-    // 父节点（家族/区域）拖拽 → 平移画布，点击 → 选中
-    this._panningParent = null
-    this._panStartMouse = null
-    this._panStartViewport = null
+    this.cy.on('tap', (evt) => {
+      const pos = evt.renderedPosition
 
-    // 用 Cytoscape 事件识别父节点（比 DOM 事件可靠）
-    this.cy.on('mousedown', 'node:parent', (evt) => {
-      if (this.spacePressed) return
-      if (this._panningParent) return // 正在拖拽中，忽略
-
-      this._panningParent = evt.target.id()
-      this._panStartMouse = { x: evt.originalEvent.clientX, y: evt.originalEvent.clientY }
-      this._panStartViewport = { x: this.cy.pan().x, y: this.cy.pan().y }
-      this.cy.userPanningEnabled(false)
-      evt.originalEvent.preventDefault()
-    })
-
-    this.container.addEventListener('mousemove', (e) => {
-      if (!this._panningParent) return
-      const dx = e.clientX - this._panStartMouse.x
-      const dy = e.clientY - this._panStartMouse.y
-      this.cy.pan({
-        x: this._panStartViewport.x + dx,
-        y: this._panStartViewport.y + dy,
-        rendered: true,
-      })
-    })
-
-    this.container.addEventListener('mouseup', (e) => {
-      if (!this._panningParent) return
-      const dx = Math.abs(e.clientX - this._panStartMouse.x)
-      const dy = Math.abs(e.clientY - this._panStartMouse.y)
-      const nodeId = this._panningParent
-      this._panningParent = null
-      this._panStartMouse = null
-      this._panStartViewport = null
-      this.cy.userPanningEnabled(true)
-      // 移动很小 → 视为点击
-      if (dx + dy < 3) {
-        this._onSelect?.({
-          type: 'node',
-          id: nodeId,
-          shiftKey: !!e.shiftKey,
-        })
+      // compound 方框范围内的「外部」节点：Cytoscape 命中会落到 cy，需按坐标补选
+      if (evt.target === this.cy) {
+        const hit = this._topLeafNodeAt(pos)
+        if (hit) {
+          this._onSelect?.({
+            type: 'node',
+            id: hit.id(),
+            shiftKey: !!evt.originalEvent?.shiftKey,
+          })
+          return
+        }
+        this._onSelect?.(null)
+        return
       }
-    })
 
-    this.cy.on('tap', 'node, edge', (evt) => {
-      const el = evt.target
+      if (!evt.target.isNode() && !evt.target.isEdge()) return
+
+      let el = evt.target
+      if (el.isNode() && el.isParent()) {
+        const hit = this._topLeafNodeAt(pos)
+        if (hit) el = hit
+      }
+
       this._onSelect?.({
         type: el.isNode() ? 'node' : 'edge',
         id: el.id(),
         shiftKey: !!evt.originalEvent?.shiftKey,
       })
-    })
-
-    this.cy.on('tap', (evt) => {
-      if (evt.target === this.cy) {
-        this._onSelect?.(null)
-      }
     })
   }
 
@@ -398,8 +425,6 @@ export class GraphManager {
 
     // 新增元素按当前模式设置拖拽能力
     this._applyNodeDragMode()
-    // 同步后更新小地图
-    this._drawMinimap()
 
     if (layout) {
       this.runLayout()
@@ -415,10 +440,12 @@ export class GraphManager {
       try { n.grabify() } catch {}
     })
 
-    const layout = this.cy.layout(this.layoutOptions)
+    const layout = this.cy.layout({ ...this.layoutOptions, fit: false })
     layout.run()
     layout.on('layoutstop', () => {
       this._applyNodeDragMode()
+      if (this._lastVisibleNodeIds?.size) this.fitToVisibleNodes(this._lastVisibleNodeIds)
+      this._scheduleMinimapDraw()
     })
   }
 
@@ -444,8 +471,45 @@ export class GraphManager {
     }
   }
 
+  setShowEdgeLabels(show) {
+    this._showEdgeLabels = show
+    this.cy.style(buildStyles(show, this._themeMode))
+  }
+
+  setHoverHighlight(on) {
+    this._hoverHighlight = on
+    if (!on) this.clearHoverDim()
+  }
+
+  applyVisibility(visibleNodeIds, visibleEdgeIds) {
+    const allowedNodes = visibleNodeIds instanceof Set ? visibleNodeIds : new Set(visibleNodeIds)
+    const allowedEdges = visibleEdgeIds instanceof Set ? visibleEdgeIds : new Set(visibleEdgeIds)
+    this._lastVisibleNodeIds = allowedNodes
+    this._lastVisibleEdgeIds = allowedEdges
+    this._setVisibleNodeSet(allowedNodes)
+    this.cy.edges().forEach((e) => {
+      if (allowedEdges.has(e.id())) e.removeClass('kg-hidden')
+      else e.addClass('kg-hidden')
+    })
+    this._scheduleMinimapDraw()
+  }
+
+  setHoverFocus(nodeId) {
+    if (!this._hoverHighlight) return
+    const center = this.cy.getElementById(nodeId)
+    if (center.empty()) return
+    const hood = center.closedNeighborhood()
+    this.cy.elements().addClass('dimmed')
+    hood.removeClass('dimmed')
+    center.addClass('hover-center')
+  }
+
+  clearHoverDim() {
+    this.cy.elements().removeClass('dimmed hover-center')
+  }
+
   clearHighlight() {
-    this.cy.elements().removeClass('highlighted dimmed')
+    this.cy.elements().removeClass('highlighted dimmed hover-center')
   }
 
   setSelected(id) {
@@ -472,12 +536,16 @@ export class GraphManager {
   }
 
   showRelated(nodeId) {
-    const center = this.cy.getElementById(nodeId)
-    if (center.empty()) return
+    this.applyVisibility(this._neighborhoodIds(nodeId), this._neighborhoodEdgeIds(nodeId))
+  }
 
-    // 先恢复全量
-    this.resetView()
+  resetView() {
+    const ids = new Set(this.cy.nodes().map((n) => n.id()))
+    const eids = new Set(this.cy.edges().map((e) => e.id()))
+    this.applyVisibility(ids, eids)
+  }
 
+  _neighborhoodIds(nodeId) {
     const visible = new Set([nodeId])
     this.cy.edges().forEach((e) => {
       const s = e.source().id()
@@ -487,11 +555,21 @@ export class GraphManager {
         visible.add(t)
       }
     })
-
-    this._setVisibleNodeSet(visible)
+    return visible
   }
 
-  resetView() {
+  _neighborhoodEdgeIds(nodeId) {
+    const ids = new Set()
+    this.cy.edges().forEach((e) => {
+      const s = e.source().id()
+      const t = e.target().id()
+      if (s === nodeId || t === nodeId) ids.add(e.id())
+    })
+    return ids
+  }
+
+  /** @deprecated use applyVisibility */
+  _legacyResetView() {
     this.cy.elements().removeClass('kg-hidden')
   }
 
@@ -567,6 +645,27 @@ export class GraphManager {
 
   // === 私有方法 ===
 
+  /** 取渲染坐标处最上层的非 compound 节点（避免家族方框挡住外部节点） */
+  _topLeafNodeAt(renderedPosition) {
+    if (!renderedPosition) return null
+    const { x, y } = renderedPosition
+    let top = null
+    let topZ = -Infinity
+
+    this.cy.nodes().forEach((n) => {
+      if (n.isParent()) return
+      const bb = n.renderedBoundingBox()
+      if (x < bb.x1 || x > bb.x2 || y < bb.y1 || y > bb.y2) return
+      const z = Number(n.style('z-index') || 0)
+      if (z >= topZ) {
+        topZ = z
+        top = n
+      }
+    })
+
+    return top
+  }
+
   _setVisibleNodeSet(visibleNodeIds) {
     const allowed = new Set(visibleNodeIds)
 
@@ -592,7 +691,9 @@ export class GraphManager {
   }
 }
 
-const STYLES = [
+function buildStyles(showEdgeLabels, themeMode = 'light') {
+  const edgeLabel = showEdgeLabels ? 'data(type)' : ''
+  const styles = [
   {
     selector: 'node',
     style: {
@@ -611,6 +712,7 @@ const STYLES = [
       width: 'label',
       height: 'label',
       padding: '6px',
+      'z-index': 10,
     },
   },
   {
@@ -638,6 +740,18 @@ const STYLES = [
     },
   },
   {
+    selector: 'node[group = "aggregate"]',
+    style: {
+      shape: 'round-rectangle',
+      'background-color': '#eef2ff',
+      'border-color': '#6366f1',
+      'border-width': 2,
+      'border-style': 'dashed',
+      color: '#4338ca',
+      'font-weight': 'bold',
+    },
+  },
+  {
     selector: 'node:parent',
     style: {
       'background-opacity': 0.06,
@@ -652,18 +766,23 @@ const STYLES = [
       'font-size': 11,
       color: '#8b7355',
       padding: 24,
+      'z-index': 1,
+      'z-compound-depth': 'bottom',
+      // 家族方框仅作视觉分组，不拦截其范围内的普通节点点击
+      events: 'no',
     },
   },
   {
     selector: 'edge',
     style: {
       width: 1,
+      opacity: 0.2,
       'line-color': '#bbbbbb',
       'target-arrow-shape': 'triangle',
       'target-arrow-color': '#bbbbbb',
       'arrow-scale': 0.7,
       'curve-style': 'bezier',
-      label: 'data(type)',
+      label: edgeLabel,
       'font-size': 10,
       color: '#444444',
       'font-family': 'PingFang SC, Microsoft YaHei, sans-serif',
@@ -679,6 +798,15 @@ const STYLES = [
       'z-index': 1,
     },
   },
+  { selector: 'edge[category = "family"]', style: { 'line-color': '#4a90e2', 'target-arrow-color': '#4a90e2' } },
+  { selector: 'edge[category = "spouse"]', style: { 'line-color': '#e74c3c', 'target-arrow-color': '#e74c3c' } },
+  { selector: 'edge[category = "master"]', style: { 'line-color': '#27ae60', 'target-arrow-color': '#27ae60' } },
+  { selector: 'edge[category = "sibling"]', style: { 'line-color': '#9b59b6', 'target-arrow-color': '#9b59b6' } },
+  { selector: 'edge[category = "romance"]', style: { 'line-color': '#e91e8c', 'target-arrow-color': '#e91e8c' } },
+  { selector: 'edge[category = "social"]', style: { 'line-color': '#95a5a6', 'target-arrow-color': '#95a5a6' } },
+  { selector: 'edge[category = "org"]', style: { 'line-color': '#8b7355', 'target-arrow-color': '#8b7355' } },
+  { selector: 'edge[category = "conflict"]', style: { 'line-color': '#c0392b', 'target-arrow-color': '#c0392b' } },
+  { selector: 'edge[category = "other"]', style: { 'line-color': '#bbbbbb', 'target-arrow-color': '#bbbbbb' } },
   {
     selector: '.highlighted',
     style: {
@@ -687,6 +815,26 @@ const STYLES = [
       'background-color': '#fff0f0',
       'z-index': 10,
     },
+  },
+  {
+    selector: '.dimmed',
+    style: { opacity: 0.06 },
+  },
+  {
+    selector: 'edge.dimmed',
+    style: { opacity: 0.04 },
+  },
+  {
+    selector: '.hover-center',
+    style: { 'border-width': 2, 'border-color': '#4a90e2', opacity: 1, 'z-index': 20 },
+  },
+  {
+    selector: 'node.hover-center',
+    style: { opacity: 1 },
+  },
+  {
+    selector: ':neighbor',
+    style: { opacity: 1 },
   },
   {
     selector: 'edge.highlighted',
@@ -723,4 +871,101 @@ const STYLES = [
     selector: '.kg-hidden',
     style: { display: 'none' },
   },
-]
+  ]
+
+  if (themeMode === 'dark') {
+    styles.push(
+      {
+        selector: 'node',
+        style: {
+          'background-color': '#141b2d',
+          color: '#d9e2ff',
+          'border-color': '#3d4a66',
+        },
+      },
+      {
+        selector: 'node[gender = "m"]',
+        style: { 'background-color': '#262033', 'border-color': '#7b6b4b' },
+      },
+      {
+        selector: 'node[gender = "f"]',
+        style: { 'background-color': '#151d31', 'border-color': '#56617d' },
+      },
+      {
+        selector: 'node[important]',
+        style: { color: '#ff8f86' },
+      },
+      {
+        selector: 'node[group = "org"]',
+        style: {
+          'background-color': '#262433',
+          'border-color': '#766852',
+          color: '#d6c39a',
+        },
+      },
+      {
+        selector: 'node[group = "aggregate"]',
+        style: {
+          'background-color': '#1b2540',
+          'border-color': '#8ea5ff',
+          color: '#c8d3ff',
+        },
+      },
+      {
+        selector: 'node:parent',
+        style: {
+          'background-color': '#8ea5ff',
+          'border-color': '#4f6082',
+          color: '#aab8d7',
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          opacity: 0.34,
+          'line-color': '#59657f',
+          'target-arrow-color': '#59657f',
+          color: '#d6def5',
+          'text-background-color': '#101624',
+          'text-border-color': '#34405a',
+        },
+      },
+      {
+        selector: '.highlighted',
+        style: {
+          'border-color': '#ff7a7a',
+          'background-color': '#3a1d2a',
+        },
+      },
+      {
+        selector: '.hover-center',
+        style: { 'border-color': '#7aa2ff' },
+      },
+      {
+        selector: 'edge.highlighted',
+        style: {
+          'line-color': '#ff7a7a',
+          'target-arrow-color': '#ff7a7a',
+          color: '#ffb1aa',
+        },
+      },
+      {
+        selector: '.selected',
+        style: { 'border-color': '#67d391' },
+      },
+      {
+        selector: 'edge.selected',
+        style: {
+          'line-color': '#67d391',
+          'target-arrow-color': '#67d391',
+        },
+      },
+      {
+        selector: 'node.link-source',
+        style: { 'border-color': '#c6a4ff' },
+      }
+    )
+  }
+
+  return styles
+}

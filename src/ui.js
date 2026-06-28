@@ -1,14 +1,17 @@
 import { exportJson, importJson, clearStorage } from './storage.js'
+import { getAggregatableTags } from './view/viewController.js'
+import { getTheme, setTheme } from './theme.js'
 
 export class SidebarPanel {
-  constructor(store, graph, editor) {
+  constructor(store, graph, editor, viewManager, detailPanel) {
     this.store = store
     this.graph = graph
     this.editor = editor
+    this.viewManager = viewManager
+    this.detailPanel = detailPanel
 
     this.searchQuery = ''
     this.currentSelection = null
-    this.hasShownRelated = false
     this.treeExpanded = new Set()
     this._treeQuery = ''
     this._treeAllExpanded = true
@@ -17,10 +20,13 @@ export class SidebarPanel {
     this._initTabs()
     this._initSearch()
     this._initButtons()
+    this._initViewControls()
     this._initStoreListener()
     this._initTree()
     this._initTreeEvents()
     this._updateButtonStates()
+
+    this.editor.onDeselect = () => this.onSelect(null)
   }
 
   // === Tab 切换 ===
@@ -95,7 +101,10 @@ export class SidebarPanel {
       this.searchQuery = ''
       this.graph.clearHighlight()
       this.editor.deselect()
-      this.graph.runLayout()
+      this.viewManager.loadForGraph(this.store.getCurrentGraphId())
+      this.viewManager.resetForGraph(this.store.getCurrentGraphId())
+      this.viewManager.applyView({ layout: true })
+      this.syncInitialSelection()
       SidebarPanel.showToast('已恢复默认数据')
     })
 
@@ -103,23 +112,264 @@ export class SidebarPanel {
       this.graph.runLayout()
     })
 
-    document.getElementById('btn-related-view').addEventListener('click', () => {
-      if (!this.currentSelection || this.currentSelection.type !== 'node') {
-        SidebarPanel.showToast('请先选中一个节点', true)
+    this._initLayoutConfig()
+  }
+
+  _initViewControls() {
+    const catsEl = document.getElementById('category-filters')
+    const legendEl = document.getElementById('legend-list')
+    if (catsEl) {
+      catsEl.innerHTML = this.viewManager
+        .getCategoryList()
+        .map(
+          (c) => `
+        <label class="check-row filter-chip">
+          <input type="checkbox" data-category="${c.id}" ${this.viewManager.getState().activeCategories.includes(c.id) ? 'checked' : ''} />
+          <span class="cat-dot" style="background:${c.color}"></span>${SidebarPanel.escapeHtml(c.label)}
+        </label>`
+        )
+        .join('')
+      catsEl.addEventListener('change', (e) => {
+        const cb = e.target.closest('[data-category]')
+        if (!cb) return
+        this.viewManager.toggleCategory(cb.dataset.category)
+        this._syncViewControls()
+      })
+    }
+    if (legendEl) {
+      legendEl.innerHTML = this.viewManager
+        .getCategoryList()
+        .map(
+          (c) =>
+            `<li><span class="cat-dot" style="background:${c.color}"></span>${SidebarPanel.escapeHtml(c.label)}</li>`
+        )
+        .join('')
+    }
+
+    document.querySelectorAll('input[name="view-mode"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (radio.checked) this.viewManager.setViewMode(radio.value)
+        this._syncViewControls()
+      })
+    })
+
+    document.getElementById('btn-reset-focus')?.addEventListener('click', () => {
+      this.viewManager.resetFocusToDefault({ layout: false })
+      const id = this.viewManager.getState().focusNodeId
+      if (id) {
+        this.graph.setSelected(id)
+        this.graph.focusNode(id)
+      }
+    })
+
+    this.viewManager.subscribe(() => {
+      this._syncViewControls()
+      this._renderAggregateActions()
+    })
+
+    const depthInput = document.getElementById('focus-depth')
+    depthInput?.addEventListener('input', () => {
+      document.getElementById('val-focus-depth').textContent = depthInput.value
+      this.viewManager.setFocusDepth(Number(depthInput.value))
+    })
+
+    document.getElementById('opt-edge-labels')?.addEventListener('change', (e) => {
+      this.viewManager.toggleEdgeLabels(e.target.checked)
+    })
+    document.getElementById('opt-hover')?.addEventListener('change', (e) => {
+      this.viewManager.toggleHoverHighlight(e.target.checked)
+    })
+    const nightMode = document.getElementById('opt-night-mode')
+    if (nightMode) {
+      nightMode.checked = getTheme() === 'dark'
+      nightMode.addEventListener('change', (e) => {
+        const theme = setTheme(e.target.checked ? 'dark' : 'light')
+        this.graph.setThemeMode?.(theme)
+      })
+    }
+
+    const timelineCb = document.getElementById('opt-timeline')
+    const timelineWrap = document.getElementById('timeline-wrap')
+    const timelineInput = document.getElementById('timeline-input')
+    const timelineDec = document.getElementById('timeline-dec')
+    const timelineInc = document.getElementById('timeline-inc')
+    const timelineHint = document.querySelector('#timeline-wrap .hint')
+    let timelineRange = this.viewManager.getTimelineRange()
+
+    const clampTimeline = (v) => {
+      const n = Math.round(Number(v))
+      if (Number.isNaN(n)) return timelineRange.min
+      return Math.max(timelineRange.min, Math.min(timelineRange.max, n))
+    }
+
+    const applyTimelineValue = (v, { sync = true } = {}) => {
+      const clamped = clampTimeline(v)
+      if (timelineInput) timelineInput.value = String(clamped)
+      timelineDec?.toggleAttribute('disabled', clamped <= timelineRange.min)
+      timelineInc?.toggleAttribute('disabled', clamped >= timelineRange.max)
+      if (sync && this.viewManager.getState().timelineEnabled) {
+        this.viewManager.setTimelineMax(clamped)
+      }
+      return clamped
+    }
+
+    const refreshTimelineBounds = () => {
+      timelineRange = this.viewManager.getTimelineRange()
+      if (timelineInput) {
+        timelineInput.min = String(timelineRange.min)
+        timelineInput.max = String(timelineRange.max)
+      }
+      const st = this.viewManager.getState()
+      const initial = st.timelineMax ?? (st.timelineEnabled ? timelineRange.min : timelineRange.max)
+      applyTimelineValue(initial, { sync: false })
+    }
+
+    refreshTimelineBounds()
+
+    if (timelineHint) {
+      timelineHint.textContent = timelineRange.hasData
+        ? '节点/边可设置 chapter、time 或 appearAt 字段'
+        : '当前图谱无章节数据，请为节点/边添加 chapter 等字段'
+    }
+    timelineCb?.addEventListener('change', (e) => {
+      timelineWrap?.classList.toggle('hidden', !e.target.checked)
+      const result = this.viewManager.setTimelineEnabled(e.target.checked)
+      if (!result.ok && result.reason === 'no-chapter-data') {
+        e.target.checked = false
+        timelineWrap?.classList.add('hidden')
+        alert('当前图谱没有章节/时间数据，无法启用时间轴过滤。')
         return
       }
-      this.graph.showRelated(this.currentSelection.id)
-      this.hasShownRelated = true
-      this._updateButtonStates()
+      if (e.target.checked) {
+        refreshTimelineBounds()
+        applyTimelineValue(this.viewManager.getState().timelineMax ?? timelineRange.min)
+      }
+    })
+    timelineDec?.addEventListener('click', () => {
+      applyTimelineValue(Number(timelineInput?.value) - 1)
+    })
+    timelineInc?.addEventListener('click', () => {
+      applyTimelineValue(Number(timelineInput?.value) + 1)
+    })
+    timelineInput?.addEventListener('change', () => {
+      applyTimelineValue(timelineInput.value)
+    })
+    timelineInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        applyTimelineValue(Number(timelineInput.value) + 1)
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        applyTimelineValue(Number(timelineInput.value) - 1)
+      }
     })
 
-    document.getElementById('btn-reset-view').addEventListener('click', () => {
-      this.graph.resetView()
-      this.hasShownRelated = false
-      this._updateButtonStates()
-    })
+    this._refreshTimelineUI = refreshTimelineBounds
+    this._applyTimelineUIValue = applyTimelineValue
 
-    this._initLayoutConfig()
+    this._renderAggregateActions()
+    this._syncViewControls()
+  }
+
+  _renderAggregateActions() {
+    const el = document.getElementById('aggregate-actions')
+    if (!el) return
+    const graphId = this.store.getCurrentGraphId()
+    const data = this.store.exportData().dataMap[graphId] ?? { nodes: [], edges: [] }
+    const tags = getAggregatableTags(data, this.viewManager.getState())
+
+    el.innerHTML = tags
+      .map(({ tag, count, collapsed: on }) => {
+        return `<button type="button" class="btn btn-sm ${on ? 'primary' : ''}" data-agg-tag="${SidebarPanel.escapeHtml(tag)}">${SidebarPanel.escapeHtml(tag)}（${count}）${on ? ' · 已折叠' : ''}</button>`
+      })
+      .join('')
+    el.querySelectorAll('[data-agg-tag]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.viewManager.toggleAggregate('', btn.dataset.aggTag)
+        this._renderAggregateActions()
+      })
+    })
+  }
+
+  _syncViewControls() {
+    const st = this.viewManager.getState()
+    document.querySelectorAll('input[name="view-mode"]').forEach((r) => {
+      r.checked = r.value === st.viewMode
+    })
+    this._syncFocusDepthControl(st)
+    document.querySelectorAll('#category-filters [data-category]').forEach((cb) => {
+      cb.checked = st.activeCategories.includes(cb.dataset.category)
+    })
+    const optLabels = document.getElementById('opt-edge-labels')
+    if (optLabels) optLabels.checked = st.showEdgeLabels
+    const optHover = document.getElementById('opt-hover')
+    if (optHover) optHover.checked = st.hoverHighlight
+    this._syncTimelineControl(st)
+    this._syncFocusCenter()
+  }
+
+  _syncTimelineControl(st = this.viewManager.getState()) {
+    const timelineWrap = document.getElementById('timeline-wrap')
+    const optTimeline = document.getElementById('opt-timeline')
+    const timelineHint = document.querySelector('#timeline-wrap .hint')
+    const range = this.viewManager.getTimelineRange()
+
+    if (optTimeline) optTimeline.checked = !!st.timelineEnabled
+    timelineWrap?.classList.toggle('hidden', !st.timelineEnabled)
+
+    if (timelineHint) {
+      timelineHint.textContent = range.hasData
+        ? '节点/边可设置 chapter、time 或 appearAt 字段'
+        : '当前图谱无章节数据，请为节点/边添加 chapter 等字段'
+    }
+
+    this._refreshTimelineUI?.()
+
+    if (st.timelineEnabled && st.timelineMax != null) {
+      this._applyTimelineUIValue?.(st.timelineMax, { sync: false })
+    }
+  }
+
+  _syncFocusDepthControl(st = this.viewManager.getState()) {
+    const depthWrap = document.getElementById('focus-depth-wrap')
+    const depthInput = document.getElementById('focus-depth')
+    const valDepth = document.getElementById('val-focus-depth')
+    const inFocusMode = st.viewMode !== 'full'
+
+    depthWrap?.classList.toggle('hidden', !inFocusMode)
+    if (!inFocusMode) return
+
+    if (depthInput) {
+      depthInput.disabled = false
+      depthInput.value = String(st.focusDepth)
+    }
+    if (valDepth) valDepth.textContent = String(st.focusDepth)
+  }
+
+  _syncFocusCenter() {
+    const wrap = document.getElementById('focus-center-wrap')
+    const label = document.getElementById('val-focus-node')
+    const btn = document.getElementById('btn-reset-focus')
+    const st = this.viewManager.getState()
+    if (!label) return
+
+    const inFocusMode = st.viewMode !== 'full'
+    wrap?.classList.toggle('muted', !inFocusMode)
+
+    if (!inFocusMode) {
+      label.textContent = '无（显示全部）'
+      btn?.setAttribute('disabled', 'disabled')
+      return
+    }
+
+    btn?.removeAttribute('disabled')
+    const node = st.focusNodeId ? this.store.getNode(st.focusNodeId) : null
+    label.textContent = node?.label ?? st.focusNodeId ?? '—'
+
+    const defaultId = this.viewManager.resolveDefaultFocusNodeId()
+    if (defaultId && st.focusNodeId === defaultId) {
+      btn?.setAttribute('disabled', 'disabled')
+    }
   }
 
   // === 布局配置 ===
@@ -161,6 +411,8 @@ export class SidebarPanel {
         this.graph.setHighlight([...nodeIds, ...edgeIds])
       }
       this._renderTree()
+      this._renderAggregateActions()
+      this.viewManager.applyView()
     })
   }
 
@@ -363,20 +615,41 @@ export class SidebarPanel {
 
   // === 选择回调 ===
 
+  /** 进入页面时与图上默认焦点保持一致 */
+  syncInitialSelection() {
+    const st = this.viewManager?.getState()
+    if (!st?.focusNodeId || st.viewMode === 'full') return
+    this.currentSelection = { type: 'node', id: st.focusNodeId }
+    this.detailPanel?.update(this.currentSelection, this.store)
+    this._updateTreeSelection()
+  }
+
   onSelect(selection) {
     if (!selection) {
       this.currentSelection = null
-      this.editor.onCanvasDeselect()
+      this.editor.deselect()
+      this.detailPanel?.renderEmpty()
       this._updateButtonStates()
       this._updateTreeSelection()
       return
     }
     this.currentSelection = selection
+
+    if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) {
+      this.viewManager.expandAggregate(selection.id)
+      return
+    }
+
     if (selection.type === 'node') {
       this.editor.onNodeSelect(selection.id, { shiftLink: selection.shiftKey })
+      if (!selection.shiftKey && this.viewManager) {
+        this.viewManager.setFocusNode(selection.id, { replace: this.viewManager.getState().viewMode !== 'expand' })
+      }
     } else {
       this.editor.onEdgeSelect(selection.id)
     }
+
+    this.detailPanel?.update(selection, this.store)
     this._updateButtonStates()
     this._updateTreeSelection()
   }
@@ -392,14 +665,6 @@ export class SidebarPanel {
   // === 按钮状态管理 ===
 
   _updateButtonStates() {
-    const btnRelated = document.getElementById('btn-related-view')
-    if (btnRelated) {
-      btnRelated.disabled = !this.currentSelection || this.currentSelection.type !== 'node'
-    }
-    const btnReset = document.getElementById('btn-reset-view')
-    if (btnReset) {
-      btnReset.disabled = !this.hasShownRelated
-    }
     const btnClear = document.getElementById('btn-clear-search')
     if (btnClear) {
       btnClear.disabled = !this.searchQuery.trim()

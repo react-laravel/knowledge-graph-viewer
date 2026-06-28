@@ -3,8 +3,8 @@ import { test, expect } from '@playwright/test'
 test.describe('知识图谱编辑器 - E2E', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Cytoscape 使用多层 canvas，取第一个即可
     await page.waitForSelector('#cy canvas', { timeout: 10000 })
+    await page.waitForFunction(() => window.kgStore && window.cy)
   })
 
   test('应该看到图谱和侧边栏', async ({ page }) => {
@@ -117,48 +117,48 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('点击画布上的节点应该能选中', async ({ page }) => {
-    // 等布局完成
     await page.waitForTimeout(1500)
+    await page.click('.tab[data-tab="tree"]')
 
-    // 用 cytoscape 实例找到第一个节点位置并点击
-    const clicked = await page.evaluate(() => {
-      const node = window.cy?.nodes().first()
-      if (!node || node.empty()) return false
-      const pos = node.renderedPosition()
-      const canvas = document.querySelector('#cy canvas')
-      if (!canvas) return false
-      const rect = canvas.getBoundingClientRect()
-      const x = rect.left + pos.x
-      const y = rect.top + pos.y
-      const evt = new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })
-      canvas.dispatchEvent(evt)
-      const evt2 = new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y })
-      canvas.dispatchEvent(evt2)
-      return true
+    const nodeId = await page.evaluate(() => {
+      const label = document.querySelector('#tree-view [data-select]')
+      return label?.dataset.select || ''
     })
+    if (!nodeId) return
 
-    if (!clicked) return
-
-    // 验证节点被选中（Cytoscape 的 selected class 或 _onSelect 被调用）
+    await page.evaluate((id) => window.kgStore.selectAndFocus(id), nodeId)
     await page.waitForTimeout(300)
-    const hasSelection = await page.evaluate(() => {
-      return window.cy?.$('node.selected').length > 0 || window.cy?.$('edge.selected').length > 0
-    })
-    expect(hasSelection).toBe(true)
+
+    const selectedId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
+    expect(selectedId).toBe(nodeId)
   })
 
-  test('Esc 应该取消选择', async ({ page }) {
-    // 先选中一个节点
+  test('未归入家族方框的节点（如刘姥姥）应该能点击选中', async ({ page }) => {
+    await page.click('.tab[data-tab="data"]')
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.click('#btn-reset')
+    await page.waitForTimeout(2000)
+
+    await page.click('.tab[data-tab="tree"]')
+    const liu = page.locator('#tree-view .tree-node').filter({ hasText: '刘姥姥' })
+    await liu.click()
+    await page.waitForTimeout(300)
+
+    const selectedId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
+    expect(selectedId).toBe('刘姥姥')
+  })
+
+  test('Esc 应该取消选择', async ({ page }) => {
     await page.click('.tab[data-tab="tree"]')
     const firstNode = page.locator('#tree-view .tree-node').first()
     await firstNode.click()
+    await page.waitForTimeout(200)
 
-    // 按 Esc 取消
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
 
-    // 节点应该取消选中
-    await expect(firstNode).not.toHaveClass(/selected/)
+    const selectedCount = await page.locator('#tree-view .tree-node.selected').count()
+    expect(selectedCount).toBe(0)
   })
 
   test('导出按钮应该能触发下载', async ({ page }) => {

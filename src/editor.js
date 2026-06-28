@@ -158,6 +158,7 @@ export class InlineEditor {
         // 没有 link mode 时，取消当前选中
         e.preventDefault()
         this.onCanvasDeselect()
+        this.onDeselect?.()
         return
       }
 
@@ -209,9 +210,14 @@ export class InlineEditor {
       }
     })
 
-    // Cytoscape 双击事件
+    // Cytoscape 双击：累加展开（单击聚焦由视图管理器处理）
     this.graph.cy.on('dbltap', 'node', (evt) => {
-      this.startEdit(evt.target.id())
+      const id = evt.target.id()
+      if (this.onNodeExpand) {
+        this.onNodeExpand(id)
+        return
+      }
+      this.startEdit(id)
     })
 
     this.graph.cy.on('dbltap', 'edge', (evt) => {

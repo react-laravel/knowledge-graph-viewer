@@ -3,7 +3,12 @@ import { GraphManager } from './graph.js'
 import { SidebarPanel } from './ui.js'
 import { InlineEditor } from './editor.js'
 import { knowledgeApi } from './api.js'
+import { ViewManager } from './view/viewManager.js'
+import { DetailPanel } from './view/detailPanel.js'
+import { initTheme } from './theme.js'
 import './styles.css'
+
+const initialTheme = initTheme()
 
 export class App {
   constructor() {
@@ -13,41 +18,48 @@ export class App {
   }
 
   async init() {
-    // 初始化组件
     const cyContainer = document.getElementById('cy')
     this.graph = new GraphManager(cyContainer, {
       onSelect: (selection) => this.ui?.onSelect(selection),
+      themeMode: initialTheme,
     })
-    // 暴露 cytoscape 实例到全局，方便测试和调试
     window.cy = this.graph.cy
+
+    this.viewManager = new ViewManager(this.store, this.graph)
+    this.detailPanel = new DetailPanel(
+      document.getElementById('detail-content'),
+      this.viewManager,
+      (nodeId) => window.kgStore?.selectAndFocus(nodeId)
+    )
+    this.detailPanel.renderEmpty()
 
     this.editor = new InlineEditor(this.store, this.graph)
-    this.ui = new SidebarPanel(this.store, this.graph, this.editor)
-    // 暴露 cytoscape 实例到全局，方便测试和调试
-    window.cy = this.graph.cy
+    this.editor.onNodeExpand = (nodeId) => {
+      if (this.viewManager.isAggregateNode(nodeId)) {
+        this.viewManager.expandAggregate(nodeId)
+      } else {
+        this.viewManager.expandFromNode(nodeId)
+      }
+    }
 
-    // 监听 store 变化
+    this.ui = new SidebarPanel(this.store, this.graph, this.editor, this.viewManager, this.detailPanel)
+
     this.store.subscribe(() => {
-      this.graph.sync(this.store.toCytoscapeElements())
       this.editor.onStoreUpdate()
       this._updateGraphSelector()
-      // 防抖保存到 API
+      this.viewManager.applyView()
       if (this.saveTimer) clearTimeout(this.saveTimer)
       this.saveTimer = setTimeout(() => this._saveToApi(), 1000)
     })
 
-    // 加载远程数据
     await this._loadGraphsFromApi()
-    this.graph.sync(this.store.toCytoscapeElements(), { layout: true })
+    this.viewManager.init()
+    this.ui._syncViewControls()
+    this.ui.syncInitialSelection()
 
-    // 图谱选择器事件
     this._initGraphSelector()
-
-    // 确保初始渲染
     this._updateGraphSelector()
   }
-
-  // === API 同步 ===
 
   async _loadGraphsFromApi() {
     try {
@@ -96,8 +108,6 @@ export class App {
     }
   }
 
-  // === 图谱选择器 ===
-
   _initGraphSelector() {
     const graphSelect = document.getElementById('graph-select')
     graphSelect?.addEventListener('change', (e) => {
@@ -113,24 +123,28 @@ export class App {
       if (window.kgStore) await window.kgStore.deleteGraph(this.store.getCurrentGraphId())
     })
 
-    // 暴露 API 到全局
     window.kgStore = {
       getGraphs: () => this.store.getGraphs(),
       getCurrentGraphId: () => this.store.getCurrentGraphId(),
       switchGraph: (id) => {
         this.store.switchGraph(id)
-        this.graph.sync(this.store.toCytoscapeElements(), { layout: true })
+        this.viewManager.loadForGraph(id)
         this.editor.deselect()
+        this.viewManager.applyView({ layout: true })
         this._updateGraphSelector()
+        this.ui.syncInitialSelection()
       },
       createGraph: async () => {
         const name = prompt('新图谱名称：', '新图谱')
         if (!name) return
         this.store.createGraph(name, '')
+        this.viewManager.resetForGraph(this.store.getCurrentGraphId())
         await this._saveToApi()
         this._updateGraphSelector()
-        this.graph.sync(this.store.toCytoscapeElements(), { layout: true })
+        this.viewManager.applyView({ layout: true })
         this.editor.deselect()
+        this._updateGraphSelector()
+        this.ui.syncInitialSelection()
       },
       deleteGraph: async (id) => {
         if (!confirm('确定删除这个图谱吗？')) return
@@ -139,19 +153,21 @@ export class App {
         } catch {}
         this.store.deleteGraph(id)
         this.graphList = this.graphList.filter((g) => String(g.id) !== id)
-        this.graph.sync(this.store.toCytoscapeElements(), { layout: true })
+        this.viewManager.loadForGraph(this.store.getCurrentGraphId())
+        this.viewManager.applyView({ layout: true })
         this.editor.deselect()
         this._updateGraphSelector()
+        this.ui.syncInitialSelection()
       },
       refreshList: async () => {
         await this._loadGraphsFromApi()
         this._updateGraphSelector()
       },
       selectAndFocus: (nodeId) => {
+        this.viewManager.setFocusNode(nodeId, { replace: true, layout: false })
         this.editor.selectNode(nodeId)
         this.graph.setSelected(nodeId)
         this.graph.focusNode(nodeId)
-        // 直接更新树视图选中状态（不走 _onSelect 回调，避免循环）
         this.ui.onSelect({ type: 'node', id: nodeId })
       },
       editNode: (nodeId) => {
@@ -176,12 +192,10 @@ export class App {
       )
       .join('')
 
-    // 只有一个图谱时禁用删除按钮
     const btnDelete = document.getElementById('btn-delete-graph')
     if (btnDelete) btnDelete.disabled = graphs.length <= 1
   }
 }
 
-// 启动应用
 const app = new App()
 app.init()

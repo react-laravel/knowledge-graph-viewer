@@ -1,5 +1,6 @@
 import { defaultGraph } from './data/defaultGraph.js'
 import { loadFromStorage, saveToStorage } from './storage.js'
+import { enrichEdge, enrichEdges } from './view/relationCategories.js'
 
 export class KnowledgeStore {
   graphs = []
@@ -186,6 +187,8 @@ export class KnowledgeStore {
     }
 
     const edge = { id: `e_${this._nextEdgeId()}`, source, target, type: type?.trim() || '关系' }
+    const enriched = enrichEdge(edge)
+    edge.category = enriched.category
     this._pushHistory()
     this.dataMap[this.currentGraphId].edges.push(edge)
     this._notify()
@@ -197,10 +200,12 @@ export class KnowledgeStore {
     const edge = edges.find((e) => e.id === id)
     if (!edge) throw new Error('关系不存在')
     const nextType = updates.type !== undefined ? updates.type.trim() : edge.type
-    if (nextType === edge.type) return
+    const nextCategory = updates.category !== undefined ? updates.category : edge.category
+    if (nextType === edge.type && nextCategory === edge.category) return
 
     this._pushHistory()
     edge.type = nextType
+    if (updates.category !== undefined) edge.category = nextCategory
     this._notify()
   }
 
@@ -280,8 +285,9 @@ export class KnowledgeStore {
     }
   }
 
-  toCytoscapeElements() {
+  toCytoscapeElements({ aggregateNodes = [] } = {}) {
     const { nodes, edges } = this._currentData()
+    const enriched = enrichEdges(edges)
     return [
       ...nodes.map((n) => ({
         data: {
@@ -291,17 +297,50 @@ export class KnowledgeStore {
           gender: n.gender || '',
           important: n.important || '',
           parent: n.parent || '',
+          tags: Array.isArray(n.tags) ? n.tags.join(',') : n.tag || '',
         },
       })),
-      ...edges.map((e) => ({
+      ...aggregateNodes.map((n) => ({
+        data: {
+          id: n.id,
+          label: n.label,
+          group: 'aggregate',
+          gender: '',
+          important: '',
+          parent: n.parent || '',
+          aggregateKey: n.aggregateKey || '',
+        },
+      })),
+      ...enriched.map((e) => ({
         data: {
           id: e.id,
           source: e.source,
           target: e.target,
           type: e.type || '',
+          category: e.category,
         },
       })),
     ]
+  }
+
+  getNodeDegree(nodeId) {
+    return this._currentData().edges.filter((e) => e.source === nodeId || e.target === nodeId).length
+  }
+
+  pickDefaultFocusNodeId() {
+    const nodes = this.getAllNodes().filter((n) => n.group !== 'org' && n.group !== 'aggregate')
+    const important = nodes.find((n) => n.important === 'yes' || n.important === true)
+    if (important) return important.id
+    let best = nodes[0]?.id ?? null
+    let max = -1
+    for (const n of nodes) {
+      const d = this.getNodeDegree(n.id)
+      if (d > max) {
+        max = d
+        best = n.id
+      }
+    }
+    return best
   }
 
   loadFromData(data) {

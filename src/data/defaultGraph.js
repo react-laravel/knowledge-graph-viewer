@@ -1,6 +1,13 @@
 import { rawGraph } from './defaultGraph.raw.js'
+import { enrichEdge } from '../view/relationCategories.js'
+import { NODE_CHAPTERS, inferEdgeChapter } from './defaultGraph.chapters.js'
 
-/** 为节点补充性别、分组、重要人物标记 */
+/** 为节点补充性别、分组、重要人物标记（示例数据演示用 tags，通用图谱请在 JSON 中直接写 tags） */
+
+const MAIDS = new Set([
+  '袭人', '晴雯', '麝月', '秋纹', '碧痕', '小红', '平儿', '鸳鸯', '紫鹃', '莺儿',
+  '司棋', '侍书', '入画', '雪雁', '金钏', '玉钏', '彩云', '彩霞', '绣橘', '宝珠', '瑞珠',
+])
 
 const MALES = new Set([
   '贾敬', '贾赦', '贾政', '贾珍', '贾蓉', '贾琏', '贾宝玉', '贾珠', '贾兰', '贾环',
@@ -43,19 +50,28 @@ const CLUSTER = {
 }
 
 function enrichGraph(graph) {
+  const nodes = graph.nodes.map((n) => {
+    if (n.group === 'org') {
+      const chapter = n.chapter ?? NODE_CHAPTERS[n.id] ?? null
+      return { ...n, gender: '', important: '', parent: ORG_PARENT[n.id] || '', chapter }
+    }
+    return {
+      ...n,
+      gender: MALES.has(n.id) ? 'm' : 'f',
+      important: IMPORTANT.has(n.id) ? 'yes' : '',
+      parent: CLUSTER[n.id] || '',
+      tags: n.tags ?? (MAIDS.has(n.id) ? ['侍女'] : []),
+      chapter: n.chapter ?? NODE_CHAPTERS[n.id] ?? null,
+    }
+  })
+  const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]))
   return {
-    nodes: graph.nodes.map((n) => {
-      if (n.group === 'org') {
-        return { ...n, gender: '', important: '', parent: ORG_PARENT[n.id] || '' }
-      }
-      return {
-        ...n,
-        gender: MALES.has(n.id) ? 'm' : 'f',
-        important: IMPORTANT.has(n.id) ? 'yes' : '',
-        parent: CLUSTER[n.id] || '',
-      }
+    nodes,
+    edges: graph.edges.map((e) => {
+      const enriched = enrichEdge(e)
+      const chapter = e.chapter ?? inferEdgeChapter({ ...e, ...enriched }, nodeById)
+      return { ...enriched, chapter: chapter ?? null }
     }),
-    edges: graph.edges.map((e) => ({ ...e })),
   }
 }
 

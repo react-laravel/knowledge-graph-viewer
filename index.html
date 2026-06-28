@@ -7,6 +7,17 @@
   </head>
   <body>
     <div id="app">
+      <aside id="detail-panel" class="sidebar-detail">
+        <div class="detail-panel-header">
+          <h2>详情</h2>
+        </div>
+        <div id="detail-content" class="detail-content"></div>
+        <div class="legend-panel">
+          <h4>关系颜色</h4>
+          <ul id="legend-list" class="legend-list"></ul>
+        </div>
+      </aside>
+
       <div id="graph-pane" class="graph-pane">
         <div id="cy"></div>
         <div id="minimap" class="minimap">
@@ -15,7 +26,7 @@
         <div id="editor-layer" class="editor-layer"></div>
       </div>
 
-      <aside id="sidebar">
+      <aside id="sidebar" class="sidebar-nav">
         <div class="graph-selector">
           <select id="graph-select" title="选择图谱"></select>
           <div class="graph-selector-actions">
@@ -25,57 +36,82 @@
         </div>
 
         <div class="tabs">
-          <button class="tab active" data-tab="shortcuts">操作</button>
+          <button class="tab active" data-tab="view">视图</button>
           <button class="tab" data-tab="tree">节点</button>
           <button class="tab" data-tab="keys">快捷键</button>
           <button class="tab" data-tab="data">数据</button>
         </div>
 
-        <div id="panel-shortcuts" class="tab-panel active">
+        <div id="panel-view" class="tab-panel active">
           <h3>搜索</h3>
-          <p class="hint">按节点名称、ID 或关系类型搜索，匹配项会高亮显示</p>
           <div class="search-box">
-            <input type="text" id="search-input" placeholder="输入关键词..." />
+            <input type="text" id="search-input" placeholder="节点 / 关系..." />
             <button class="btn" id="btn-clear-search">清除</button>
           </div>
 
-          <h3 style="margin-top: 16px">查看模式</h3>
-          <button class="btn btn-block" id="btn-related-view">只看相关（1跳）</button>
-          <button class="btn btn-block" id="btn-reset-view">显示全部</button>
+          <h3 class="section-title">视图模式</h3>
+          <div class="view-mode-group" id="view-mode-group">
+            <label class="radio-row"><input type="radio" name="view-mode" value="focus" checked /> 中心展开（默认）</label>
+            <label class="radio-row"><input type="radio" name="view-mode" value="expand" /> 渐进展开</label>
+            <label class="radio-row"><input type="radio" name="view-mode" value="full" /> 显示全部</label>
+          </div>
+          <div class="layout-field focus-depth-wrap" id="focus-depth-wrap" style="margin-top: 8px">
+            <label id="focus-depth-label">展开深度 <span id="val-focus-depth">1</span> 跳</label>
+            <input type="range" id="focus-depth" min="1" max="5" step="1" value="1" />
+          </div>
+          <div id="focus-center-wrap" class="focus-center-wrap">
+            <div class="focus-center-row">
+              <div class="focus-center-info">
+                <span class="focus-center-label">当前中心</span>
+                <strong id="val-focus-node" class="focus-center-name" title="单击节点可切换中心">—</strong>
+              </div>
+              <button type="button" class="btn btn-sm focus-reset-btn" id="btn-reset-focus">恢复默认</button>
+            </div>
+          </div>
 
-          <h3 style="margin-top: 16px">布局设置</h3>
-          <div class="layout-section">
+          <h3 class="section-title">关系筛选</h3>
+          <div id="category-filters" class="filter-grid"></div>
+
+          <h3 class="section-title">显示选项</h3>
+          <label class="check-row"><input type="checkbox" id="opt-edge-labels" /> 显示连线文字</label>
+          <label class="check-row"><input type="checkbox" id="opt-hover" checked /> Hover 高亮相邻</label>
+          <label class="check-row"><input type="checkbox" id="opt-night-mode" /> 夜晚模式</label>
+
+          <h3 class="section-title">时间轴</h3>
+          <label class="check-row"><input type="checkbox" id="opt-timeline" /> 按时间/章节过滤</label>
+          <div id="timeline-wrap" class="timeline-wrap hidden">
+            <div class="chapter-stepper-row">
+              <span class="timeline-label">截至第</span>
+              <div class="chapter-stepper">
+                <button type="button" id="timeline-dec" class="btn-icon stepper-btn" aria-label="上一回">−</button>
+                <input type="number" id="timeline-input" class="chapter-input" min="1" max="120" step="1" value="1" inputmode="numeric" />
+                <button type="button" id="timeline-inc" class="btn-icon stepper-btn" aria-label="下一回">+</button>
+              </div>
+              <span class="timeline-unit">回</span>
+            </div>
+            <p class="hint">节点/边可设置 chapter、time 或 appearAt 字段</p>
+          </div>
+
+          <h3 class="section-title">聚合</h3>
+          <p class="hint">节点可设置 tags 数组，同标签可折叠为一组</p>
+          <div id="aggregate-actions" class="aggregate-actions"></div>
+
+          <h3 class="section-title">布局</h3>
+          <div class="layout-section compact">
             <div class="layout-field">
-              <label>节点斥力 <span id="val-repulsion">8000</span></label>
+              <label>斥力 <span id="val-repulsion">8000</span></label>
               <input type="range" id="layout-repulsion" min="1000" max="30000" step="500" value="8000" />
-              <p class="layout-hint">节点间排斥力，值越大节点越分散</p>
             </div>
             <div class="layout-field">
-              <label>理想边长 <span id="val-edge-length">160</span></label>
+              <label>边长 <span id="val-edge-length">160</span></label>
               <input type="range" id="layout-edge-length" min="50" max="500" step="10" value="160" />
-              <p class="layout-hint">连线希望达到的长度，值越大节点间距越大</p>
             </div>
-            <div class="layout-field">
-              <label>边弹性 <span id="val-elasticity">0.45</span></label>
-              <input type="range" id="layout-elasticity" min="0.05" max="1" step="0.05" value="0.45" />
-              <p class="layout-hint">连线的刚性，值越大连线越紧绷</p>
-            </div>
-            <div class="layout-field">
-              <label>嵌套因子 <span id="val-nesting">0.12</span></label>
-              <input type="range" id="layout-nesting" min="0.01" max="0.5" step="0.01" value="0.12" />
-              <p class="layout-hint">家族节点对其子节点的吸引力，值越大子节点越聚拢</p>
-            </div>
-            <div class="layout-field">
-              <label>重力 <span id="val-gravity">0.35</span></label>
-              <input type="range" id="layout-gravity" min="0.05" max="2" step="0.05" value="0.35" />
-              <p class="layout-hint">整体向中心聚拢的力，值越大图越紧凑不散开</p>
-            </div>
-            <button class="btn btn-block primary" id="btn-apply-layout" style="margin-top: 8px">应用并重新布局</button>
+            <button class="btn btn-block primary" id="btn-apply-layout">应用并重新布局</button>
           </div>
         </div>
 
         <div id="panel-tree" class="tab-panel">
-          <h3>节点列表</h3>
+          <h3>节点树</h3>
           <div id="tree-toolbar" class="tree-toolbar">
             <button class="btn btn-icon btn-sm" id="btn-tree-toggle" title="展开/收起全部">⊟</button>
             <input type="text" id="tree-search-input" placeholder="搜索节点..." />
@@ -85,27 +121,20 @@
 
         <div id="panel-keys" class="tab-panel">
           <h3>键盘操作</h3>
-          <p class="hint">点击节点选中，直接在图上编辑，无需填表单</p>
           <ul class="shortcut-list">
-            <li><span class="shortcut-desc">移动视角</span><span class="shortcut-keys">普通拖拽画布</span></li>
-            <li><span class="shortcut-desc">拖拽节点 / 家族</span><span class="shortcut-keys">按住 <kbd>Space</kbd> + 拖拽</span></li>
-            <li><span class="shortcut-desc">关联两个节点</span><span class="shortcut-keys"><kbd>Shift+点击</kbd> / <kbd>L</kbd></span></li>
-            <li><span class="shortcut-desc">节点归入家族</span><span class="shortcut-keys">选中家族 · <kbd>Shift+点击</kbd> 目标</span></li>
-            <li><span class="shortcut-desc">编辑关系类型</span><span class="shortcut-keys"><kbd>Enter</kbd> / 双击连线</span></li>
-            <li><span class="shortcut-desc">删除关系</span><span class="shortcut-keys">选中连线 · <kbd>Del</kbd></span></li>
-            <li><span class="shortcut-desc">创建子节点</span><span class="shortcut-keys"><kbd>Tab</kbd></span></li>
-            <li><span class="shortcut-desc">创建同级节点</span><span class="shortcut-keys"><kbd>Enter</kbd></span></li>
-            <li><span class="shortcut-desc">编辑节点名称</span><span class="shortcut-keys"><kbd>Enter</kbd> / 双击</span></li>
-            <li><span class="shortcut-desc">删除节点</span><span class="shortcut-keys"><kbd>Del</kbd></span></li>
-            <li><span class="shortcut-desc">撤销 / 重做</span><span class="shortcut-keys"><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></span></li>
-            <li><span class="shortcut-desc">取消编辑</span><span class="shortcut-keys"><kbd>Esc</kbd></span></li>
+            <li><span class="shortcut-desc">移动视角</span><span class="shortcut-keys">拖拽画布</span></li>
+            <li><span class="shortcut-desc">拖拽节点</span><span class="shortcut-keys"><kbd>Space</kbd> + 拖拽</span></li>
+            <li><span class="shortcut-desc">聚焦人物</span><span class="shortcut-keys">单击节点</span></li>
+            <li><span class="shortcut-desc">累加展开</span><span class="shortcut-keys">双击节点</span></li>
+            <li><span class="shortcut-desc">关联节点</span><span class="shortcut-keys"><kbd>Shift</kbd>+点击 / <kbd>L</kbd></span></li>
+            <li><span class="shortcut-desc">编辑</span><span class="shortcut-keys"><kbd>Enter</kbd> / 双击</span></li>
+            <li><span class="shortcut-desc">撤销</span><span class="shortcut-keys"><kbd>⌘Z</kbd></span></li>
           </ul>
-          <p class="hint" style="margin-top: 12px">编辑中按 Tab / Enter 会先保存当前内容，再创建下一个节点</p>
         </div>
 
         <div id="panel-data" class="tab-panel">
           <h3>数据管理</h3>
-          <p class="hint">数据保存在浏览器 localStorage，刷新页面不会丢失</p>
+          <p class="hint">数据保存在 localStorage</p>
           <button class="btn btn-block" id="btn-export">导出 JSON</button>
           <button class="btn btn-block" id="btn-import">导入 JSON</button>
           <input type="file" id="file-import" accept=".json" />
