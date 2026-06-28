@@ -117,7 +117,6 @@ export class SidebarPanel {
 
   _initViewControls() {
     const catsEl = document.getElementById('category-filters')
-    const legendEl = document.getElementById('legend-list')
     if (catsEl) {
       catsEl.innerHTML = this.viewManager
         .getCategoryList()
@@ -135,15 +134,6 @@ export class SidebarPanel {
         this.viewManager.toggleCategory(cb.dataset.category)
         this._syncViewControls()
       })
-    }
-    if (legendEl) {
-      legendEl.innerHTML = this.viewManager
-        .getCategoryList()
-        .map(
-          (c) =>
-            `<li><span class="cat-dot" style="background:${c.color}"></span>${SidebarPanel.escapeHtml(c.label)}</li>`
-        )
-        .join('')
     }
 
     document.querySelectorAll('input[name="view-mode"]').forEach((radio) => {

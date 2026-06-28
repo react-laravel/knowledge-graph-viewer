@@ -218,33 +218,6 @@ body {
   margin: 0;
 }
 
-.legend-panel {
-  border-top: 1px solid #e8e8e8;
-  padding: 8px 12px 10px;
-}
-
-.legend-panel h4 {
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: #666;
-}
-
-.legend-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: 10px;
-}
-
-.legend-list li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .cat-dot {
   display: inline-block;
   width: 8px;
@@ -1062,7 +1035,6 @@ body.theme-dark .sidebar-detail {
 }
 
 body.theme-dark .detail-panel-header,
-body.theme-dark .legend-panel,
 body.theme-dark .tabs,
 body.theme-dark .graph-selector,
 body.theme-dark .section,
@@ -1084,7 +1056,6 @@ body.theme-dark .detail-empty,
 body.theme-dark .detail-dl dt,
 body.theme-dark .detail-id,
 body.theme-dark .detail-rel-type,
-body.theme-dark .legend-panel h4,
 body.theme-dark .focus-center-label,
 body.theme-dark .field-label,
 body.theme-dark .layout-field label,

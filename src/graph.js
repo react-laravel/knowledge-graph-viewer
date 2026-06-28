@@ -922,9 +922,7 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
       {
         selector: 'edge',
         style: {
-          opacity: 0.34,
-          'line-color': '#59657f',
-          'target-arrow-color': '#59657f',
+          opacity: 0.5,
           color: '#d6def5',
           'text-background-color': '#101624',
           'text-border-color': '#34405a',
