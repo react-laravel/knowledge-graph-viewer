@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { authenticatePage } from './auth'
 
 test.describe('父节点平移交互', () => {
   test.beforeEach(async ({ page }) => {
+    await authenticatePage(page)
     await page.goto('/')
     // Cytoscape 使用多层 canvas
     await page.waitForSelector('#cy canvas', { timeout: 10000 })

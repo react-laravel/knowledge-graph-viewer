@@ -5,7 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>知识图谱编辑器</title>
   </head>
-  <body>
+  <body class="auth-pending">
+    <div id="auth-screen" class="auth-screen" role="status" aria-live="polite">
+      <section class="auth-card">
+        <div class="auth-spinner" aria-hidden="true"></div>
+        <h1>知识图谱</h1>
+        <p id="auth-status">正在确认 DogeOW 登录状态…</p>
+        <button type="button" class="btn primary" id="btn-auth-retry" hidden>重新登录</button>
+      </section>
+    </div>
+
     <div id="app">
       <aside id="detail-panel" class="sidebar-detail">
         <div class="detail-panel-header">
@@ -23,6 +32,10 @@
       </div>
 
       <aside id="sidebar" class="sidebar-nav">
+        <div class="account-bar">
+          <span id="auth-user-name" class="account-name"></span>
+          <button type="button" class="btn btn-sm" id="btn-logout">退出</button>
+        </div>
         <div class="graph-selector">
           <select id="graph-select" title="选择图谱"></select>
           <div class="graph-selector-actions">

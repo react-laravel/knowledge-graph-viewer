@@ -406,6 +406,79 @@ body {
   border-bottom: 1px solid #e0e0e0;
 }
 
+.auth-pending #app {
+  visibility: hidden;
+}
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f5f7fb;
+}
+
+.auth-screen[hidden] {
+  display: none;
+}
+
+.auth-card {
+  width: min(380px, 100%);
+  padding: 28px;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #e0e5ee;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(34, 50, 84, 0.12);
+}
+
+.auth-card h1 {
+  margin: 16px 0 8px;
+  font-size: 20px;
+}
+
+.auth-card p {
+  margin: 0 0 18px;
+  color: #68738a;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.auth-spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  border: 4px solid #dce6f5;
+  border-top-color: #4a90e2;
+  border-radius: 50%;
+  animation: auth-spin 0.8s linear infinite;
+}
+
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+.account-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graph-selector {
   display: flex;
   gap: 6px;
@@ -1037,6 +1110,7 @@ body.theme-dark .sidebar-detail {
 body.theme-dark .detail-panel-header,
 body.theme-dark .tabs,
 body.theme-dark .graph-selector,
+body.theme-dark .account-bar,
 body.theme-dark .section,
 body.theme-dark .shortcut-list li,
 body.theme-dark .detail-rel-list li {
@@ -1075,6 +1149,27 @@ body.theme-dark .tree-label,
 body.theme-dark .check-row,
 body.theme-dark .radio-row {
   color: #cbd6f1;
+}
+
+body.theme-dark .auth-screen {
+  background: #0b1020;
+}
+
+body.theme-dark .auth-card {
+  color: #eef3ff;
+  background: #111827;
+  border-color: #273247;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+body.theme-dark .auth-card p,
+body.theme-dark .account-name {
+  color: #96a3bf;
+}
+
+body.theme-dark .auth-spinner {
+  border-color: #33415c;
+  border-top-color: #8ea5ff;
 }
 
 body.theme-dark .focus-center-wrap,
@@ -1229,4 +1324,3 @@ body.theme-dark .edge-editor.editing input {
   border-color: #f0a45f;
   box-shadow: 0 2px 12px rgba(240, 164, 95, 0.28);
 }
-

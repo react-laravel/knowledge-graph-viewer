@@ -6,6 +6,7 @@ import { knowledgeApi } from './api.js'
 import { ViewManager } from './view/viewManager.js'
 import { DetailPanel } from './view/detailPanel.js'
 import { initTheme } from './theme.js'
+import { initAuthUi, requireSso } from './auth.js'
 import './styles.css'
 
 const initialTheme = initTheme()
@@ -18,6 +19,10 @@ export class App {
   }
 
   async init() {
+    const user = await requireSso()
+    if (!user) return
+    initAuthUi(user)
+
     const cyContainer = document.getElementById('cy')
     this.graph = new GraphManager(cyContainer, {
       onSelect: (selection) => this.ui?.onSelect(selection),

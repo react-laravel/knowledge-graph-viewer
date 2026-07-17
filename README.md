@@ -13,6 +13,7 @@
 - **撤销重做** — ⌘Z / ⌘⇧Z 支持
 - **导入导出** — JSON 格式导入导出，数据持久化到 localStorage
 - **远程同步** — 可选对接后端 API 自动保存
+- **DogeOW 单点登录** — 复用 DogeOW 账号，通过一次性票据 + PKCE 安全登录
 
 ## 快捷键
 
@@ -44,6 +45,18 @@ npm run build
 # 预览构建产物
 npm run preview
 ```
+
+## 单点登录配置
+
+前端构建时可通过以下变量覆盖默认地址：
+
+```bash
+VITE_DOGEOW_URL=https://next.dogeow.com
+VITE_KNOWLEDGE_API_URL=https://next-api.dogeow.com
+```
+
+生产环境还需要在 `dogeow-api` 中启用 `knowledge-graph` SSO 客户端，允许
+`https://mind.dogeow.com` 作为返回来源。客户端使用 PKCE，不需要也不应配置前端密钥。
 
 ## 技术栈
 

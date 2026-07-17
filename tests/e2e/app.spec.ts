@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { authenticatePage } from './auth'
 
 test.describe('知识图谱编辑器 - E2E', () => {
   test.beforeEach(async ({ page }) => {
+    await authenticatePage(page)
     await page.goto('/')
     await page.waitForSelector('#cy canvas', { timeout: 10000 })
     await page.waitForFunction(() => window.kgStore && window.cy)
