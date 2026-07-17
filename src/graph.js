@@ -619,10 +619,18 @@ export class GraphManager {
     const pos = parent.position()
     const angle = -Math.PI / 3 + index * (Math.PI / 6)
 
-    child.position({
-      x: pos.x + 120 * Math.cos(angle),
-      y: pos.y + 100 + index * 40,
-    })
+    const wasLocked = child.locked()
+    try {
+      if (wasLocked) child.unlock()
+      child.position({
+        x: pos.x + 120 * Math.cos(angle),
+        y: pos.y + 100 + index * 40,
+      })
+    } finally {
+      if (wasLocked) child.lock()
+    }
+
+    this._scheduleMinimapDraw()
   }
 
   fitGraph() {

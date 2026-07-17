@@ -138,6 +138,27 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect
       .poll(() => page.evaluate(() => window.cy?.edges().length ?? 0))
       .toBe(1)
+
+    // 连续按 Tab 创建下一级节点时，节点之间也必须保持可见间距。
+    await editor.fill('子节点')
+    await editor.press('Tab')
+    await expect(editor).toHaveValue('新节点')
+    await expect
+      .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
+      .toBe(3)
+
+    const minimumNodeDistance = await page.evaluate(() => {
+      const nodes = window.cy?.nodes().toArray() ?? []
+      const distances = nodes.flatMap((node, index) =>
+        nodes.slice(index + 1).map((other) => {
+          const first = node.position()
+          const second = other.position()
+          return Math.hypot(first.x - second.x, first.y - second.y)
+        }),
+      )
+      return distances.length ? Math.min(...distances) : 0
+    })
+    expect(minimumNodeDistance).toBeGreaterThan(80)
   })
 
   test('点击画布上的节点应该能选中', async ({ page }) => {
