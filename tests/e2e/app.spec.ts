@@ -113,9 +113,31 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await page.waitForTimeout(2000)
   })
 
-  test('快捷键 Tab 应该能创建子节点', async ({ page }) => {
+  test('新图谱中编辑节点时按 Tab 应该创建子节点并继续输入', async ({ page }) => {
+    page.once('dialog', async (dialog) => dialog.accept('技术'))
+    await page.click('#btn-new-graph')
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id || ''))
+      .not.toBe('btn-new-graph')
+
+    // 空图谱第一次按 Tab 创建根节点并进入编辑。
     await page.keyboard.press('Tab')
-    await page.waitForTimeout(500)
+    const editor = page.locator('.node-editor.editing textarea')
+    await expect(editor).toBeVisible()
+    await expect(editor).toBeFocused()
+    await editor.fill('技术')
+
+    // 编辑时再次按 Tab：提交当前文本，创建子节点，并把输入焦点交给子节点。
+    await editor.press('Tab')
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue('新节点')
+
+    await expect
+      .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
+      .toBe(2)
+    await expect
+      .poll(() => page.evaluate(() => window.cy?.edges().length ?? 0))
+      .toBe(1)
   })
 
   test('点击画布上的节点应该能选中', async ({ page }) => {

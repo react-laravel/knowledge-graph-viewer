@@ -150,6 +150,7 @@ export class App {
         this.editor.deselect()
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
+        document.getElementById('btn-new-graph')?.blur()
       },
       deleteGraph: async (id) => {
         if (!confirm('确定删除这个图谱吗？')) return

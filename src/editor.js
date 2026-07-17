@@ -509,7 +509,7 @@ export class InlineEditor {
     this._applyGraphHistory(() => this.store.redo())
   }
 
-  createChild(fromId) {
+  createChild(fromId = this.selectedNodeId) {
     if (!fromId) return null
     if (!this.commitEdit()) return null
 
@@ -520,7 +520,7 @@ export class InlineEditor {
     return childId
   }
 
-  createSibling(fromId) {
+  createSibling(fromId = this.selectedNodeId) {
     if (!fromId) return null
     if (!this.commitEdit()) return null
 
