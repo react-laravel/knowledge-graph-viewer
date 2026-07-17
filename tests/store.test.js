@@ -247,6 +247,24 @@ describe('KnowledgeStore', () => {
       store.deleteGraph('g1')
       expect(store.getCurrentGraphId()).toBe(id2)
     })
+
+    it('服务端创建后应把临时 ID 替换为服务端 ID 并保留数据', () => {
+      const temporaryId = store.createGraph('G2')
+      store.addChildNode(null, '根节点')
+
+      store.replaceGraphId(temporaryId, '42', {
+        name: '服务端图谱',
+        description: '已同步',
+      })
+
+      expect(store.getCurrentGraphId()).toBe('42')
+      expect(store.getGraphs().find((g) => g.id === '42')).toMatchObject({
+        name: '服务端图谱',
+        description: '已同步',
+      })
+      expect(store.exportData().dataMap[temporaryId]).toBeUndefined()
+      expect(store.getAllNodes().map((node) => node.label)).toContain('根节点')
+    })
   })
 
   // === 导出导入 ===

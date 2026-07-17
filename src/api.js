@@ -112,11 +112,12 @@ export const knowledgeApi = {
     return request('/api/knowledge-graphs/' + id)
   },
 
-  update(id, data) {
-    return request('/api/knowledge-graphs/' + id, {
+  async update(id, data) {
+    const response = await request('/api/knowledge-graphs/' + id, {
       method: 'PUT',
       body: JSON.stringify(data),
     })
+    return response.graph ?? response
   },
 
   delete(id) {

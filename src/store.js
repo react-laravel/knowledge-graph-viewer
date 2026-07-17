@@ -443,6 +443,40 @@ export class KnowledgeStore {
     this._notify()
   }
 
+  replaceGraphId(oldId, newId, metadata = {}) {
+    const oldKey = String(oldId)
+    const newKey = String(newId)
+    const graph = this.graphs.find((item) => item.id === oldKey)
+    if (!graph) throw new Error('图谱不存在')
+    if (oldKey !== newKey && this.graphs.some((item) => item.id === newKey)) {
+      throw new Error('图谱 ID 已存在')
+    }
+
+    graph.id = newKey
+    if (metadata.name !== undefined) graph.name = metadata.name
+    if (metadata.description !== undefined) graph.description = metadata.description
+    if (metadata.updatedAt !== undefined) graph.updatedAt = metadata.updatedAt
+
+    if (oldKey !== newKey) {
+      this.dataMap[newKey] = this.dataMap[oldKey] ?? { nodes: [], edges: [] }
+      delete this.dataMap[oldKey]
+
+      if (this.undoStacks[oldKey]) {
+        this.undoStacks[newKey] = this.undoStacks[oldKey]
+        delete this.undoStacks[oldKey]
+      }
+      if (this.redoStacks[oldKey]) {
+        this.redoStacks[newKey] = this.redoStacks[oldKey]
+        delete this.redoStacks[oldKey]
+      }
+      if (this.currentGraphId === oldKey) this.currentGraphId = newKey
+    }
+
+    this._ensureStacks(newKey)
+    this._notify()
+    return newKey
+  }
+
   // === 订阅 ===
 
   subscribe(fn) {

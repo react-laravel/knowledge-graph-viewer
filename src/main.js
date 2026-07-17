@@ -16,6 +16,8 @@ export class App {
     this.store = initStore()
     this.graphList = []
     this.saveTimer = null
+    this.savePromise = null
+    this.saveAgain = false
   }
 
   async init() {
@@ -53,8 +55,7 @@ export class App {
       this.editor.onStoreUpdate()
       this._updateGraphSelector()
       this.viewManager.applyView()
-      if (this.saveTimer) clearTimeout(this.saveTimer)
-      this.saveTimer = setTimeout(() => this._saveToApi(), 1000)
+      this._scheduleSave()
     })
 
     await this._loadGraphsFromApi()
@@ -92,20 +93,62 @@ export class App {
     }
   }
 
+  _scheduleSave(delay = 1000) {
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null
+      this._saveToApi()
+    }, delay)
+  }
+
   async _saveToApi() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (this.savePromise) {
+      this.saveAgain = true
+      return this.savePromise
+    }
+
+    this.savePromise = this._performSaveToApi()
+    try {
+      await this.savePromise
+    } finally {
+      this.savePromise = null
+      if (this.saveAgain) {
+        this.saveAgain = false
+        this._scheduleSave(0)
+      }
+    }
+  }
+
+  async _performSaveToApi() {
     try {
       const currentId = this.store.getCurrentGraphId()
       const apiGraph = this.graphList.find((g) => String(g.id) === currentId)
       const data = this.store.exportData()
       const currentData = data.dataMap[currentId] ?? { nodes: [], edges: [] }
+      const graphMeta = this.store.getGraphs().find((g) => g.id === currentId)
+      const name = graphMeta?.name || apiGraph?.name || '未命名图谱'
+      const description = graphMeta?.description ?? apiGraph?.description ?? ''
 
       if (apiGraph) {
-        await knowledgeApi.update(Number(currentId), { data: currentData })
+        const updated = await knowledgeApi.update(Number(currentId), {
+          name,
+          description,
+          data: currentData,
+        })
+        Object.assign(apiGraph, updated)
       } else {
-        const name = this.store.getGraphs().find((g) => g.id === currentId)?.name || '未命名图谱'
-        const created = await knowledgeApi.create(name, '', currentData)
-        this.graphList.push(created)
-        this.store.renameGraph(currentId, created.name)
+        const created = await knowledgeApi.create(name, description, currentData)
+        if (created?.id == null) throw new Error('创建图谱后未返回 ID')
+        this.graphList.unshift(created)
+        this.store.replaceGraphId(currentId, String(created.id), {
+          name: created.name,
+          description: created.description ?? description,
+          updatedAt: created.updated_at,
+        })
         this._updateGraphSelector()
       }
     } catch {
