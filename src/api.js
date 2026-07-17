@@ -3,7 +3,8 @@
  * 与后端 dogeow-api 通信
  */
 
-const API_BASE = (import.meta?.env?.VITE_KNOWLEDGE_API_URL) || 'http://localhost:8000'
+const DEFAULT_API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : 'https://next-api.dogeow.com'
+const API_BASE = import.meta.env.VITE_KNOWLEDGE_API_URL || DEFAULT_API_BASE
 const TOKEN_KEY = 'knowledge-graph-auth-token'
 
 export class ApiError extends Error {
