@@ -23,6 +23,15 @@ async function selectViewMode(page: Page, mode: 'focus' | 'expand' | 'full') {
   await expect(page.locator('#view-mode-select')).toHaveValue(mode)
 }
 
+async function createMindMap(page: Page, name = '技术') {
+  await openAppMenu(page)
+  page.once('dialog', (dialog) => dialog.accept(name))
+  await page.click('#btn-new-graph')
+  await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(1)
+  await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(0)
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id || '')).toBe('cy')
+}
+
 test.describe('知识图谱编辑器 - E2E', () => {
   test.beforeEach(async ({ page }) => {
     await authenticatePage(page)
@@ -84,6 +93,10 @@ test.describe('知识图谱编辑器 - E2E', () => {
     page.once('dialog', (dialog) => dialog.accept('有子节点的图谱'))
     await page.click('#btn-new-graph')
     await page.click('#btn-add-child-node')
+    const childEditor = page.locator('.node-editor.editing textarea')
+    await expect(childEditor).toBeFocused()
+    await childEditor.fill('已命名子节点')
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
     await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
 
     let confirmation = ''
@@ -217,6 +230,45 @@ test.describe('知识图谱编辑器 - E2E', () => {
     const savedLink = page.locator('[data-link-row]').filter({ has: page.locator('[value="参考资料"]') })
     await expect(savedLink.locator('[data-link-url]')).toHaveValue('https://example.com/reference')
     await expect(savedLink.locator('[data-open-link]')).toHaveAttribute('href', 'https://example.com/reference')
+  })
+
+  test('桌面端操作栏不应使用失焦后已删除的草稿节点', async ({ page }) => {
+    await createMindMap(page)
+    const actionBar = page.locator('#node-action-bar')
+    const editor = page.locator('.node-editor.editing textarea')
+
+    const expectOnlyRootWithoutOrphans = async () => {
+      await expect.poll(() => page.evaluate(() => {
+        const nodeIds = new Set(window.cy?.nodes().map((node) => node.id()) ?? [])
+        const edges = window.cy?.edges().toArray() ?? []
+        return {
+          nodes: nodeIds.size,
+          edges: edges.length,
+          orphanEdges: edges.filter((edge) => (
+            !nodeIds.has(edge.source().id()) || !nodeIds.has(edge.target().id())
+          )).length,
+        }
+      })).toEqual({ nodes: 1, edges: 0, orphanEdges: 0 })
+      await expect(actionBar).toBeHidden()
+    }
+
+    // 按下“子主题”时 textarea 会先 blur，未命名草稿随即被删除。
+    // click 阶段不得继续用旧草稿 ID 创建子节点。
+    await expect(actionBar).toBeVisible()
+    await page.locator('#btn-add-child-node').click()
+    await expect(editor).toBeFocused()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+    await page.locator('#btn-add-child-node').click()
+    await expectOnlyRootWithoutOrphans()
+
+    // “同级”入口也要做同样的实时选择校验。
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await expect(actionBar).toBeVisible()
+    await page.locator('#btn-add-child-node').click()
+    await expect(editor).toBeFocused()
+    await expect(page.locator('#btn-add-sibling-node')).toBeVisible()
+    await page.locator('#btn-add-sibling-node').click()
+    await expectOnlyRootWithoutOrphans()
   })
 
   test('桌面端应该能通过移动模式把已有节点移动到目标节点下', async ({ page }) => {
@@ -450,8 +502,8 @@ test.describe('知识图谱编辑器 - E2E', () => {
         && Math.abs(second.x) > 150
     })).toBe(true)
 
-    // undo/redo 恢复结构后也必须自动重排，不能把恢复节点放回中心原点。
-    await page.keyboard.press('Control+z')
+    // 新建主题是一次原子历史操作：一次撤销删除整个主题，
+    // 一次重做恢复结构并自动重排，不能把恢复节点放回中心原点。
     await page.keyboard.press('Control+z')
     await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
     await page.keyboard.press('Control+Shift+z')
@@ -465,7 +517,6 @@ test.describe('知识图谱编辑器 - E2E', () => {
         return Math.hypot(pos.x - rootPos.x, pos.y - rootPos.y) > 150
       })
     })).toBe(true)
-    await page.keyboard.press('Control+Shift+z')
     await expect.poll(() => page.evaluate(() => (
       window.cy?.nodes().toArray().some((node) => node.data('label') === 'Obsidian') ?? false
     ))).toBe(true)
@@ -494,9 +545,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('非中心主题按 Tab 创建的子主题应该排在父主题外侧且不与中心重叠', async ({ page }) => {
-    await openAppMenu(page)
-    page.once('dialog', (dialog) => dialog.accept('技术'))
-    await page.click('#btn-new-graph')
+    await createMindMap(page)
 
     await page.keyboard.press('Tab')
     const editor = page.locator('.node-editor.editing textarea')
@@ -566,10 +615,147 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#val-focus-depth')).toHaveText('1')
   })
 
+  test('未命名子主题不应连续累积，取消后应完整移除', async ({ page }) => {
+    await createMindMap(page)
+    const editor = page.locator('.node-editor.editing textarea')
+
+    // 第一次 Tab 只创建一个待命名草稿；草稿未命名前，
+    // 继续 Tab / Enter 不应生成更多“新节点”。
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue('新节点')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(1)
+
+    // 没有可重做内容时，快捷键不能让编辑器丢失草稿追踪状态。
+    await editor.press('Control+Shift+z')
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue('新节点')
+
+    await editor.press('Tab')
+    await editor.press('Enter')
+    await expect(editor).toBeFocused()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(1)
+
+    // Esc 取消新建草稿时，节点和层级边都必须回到初始状态。
+    await editor.press('Escape')
+    await expect(editor).toBeHidden()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(1)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(0)
+
+    // Escape 是明确取消，即使已经输入文字也不应把草稿转成正式节点。
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await editor.fill('将取消的节点')
+    await editor.press('Escape')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(1)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(0)
+
+    // 点击空白画布也是取消未命名草稿，不能默认保存“新节点”。
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
+    await expect(editor).toBeHidden()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(1)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(0)
+
+    // 输入有效名称后失焦则应正常提交，且只新增一个节点。
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await editor.fill('AI')
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
+    await expect(editor).toBeHidden()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(1)
+    await expect.poll(() => page.evaluate(() => (
+      window.cy?.nodes().map((node) => node.data('label')).sort() ?? []
+    ))).toEqual(['AI', '技术'])
+    await expect.poll(() => page.evaluate(() => {
+      const edge = window.cy?.edges('[hierarchy = "yes"]').first()
+      return edge?.nonempty() ? [edge.source().id(), edge.target().data('label')] : []
+    })).toEqual(['root', 'AI'])
+  })
+
+  test('历史未完成节点应能安全清理并撤销恢复', async ({ page }) => {
+    await createMindMap(page)
+    const editor = page.locator('.node-editor.editing textarea')
+
+    // 模拟旧版已经持久化的占位节点：节点名和 ID 都是“新节点”，
+    // 且只有一条父级层级边。先输入再改回占位名，使它正常结束草稿状态。
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await editor.fill('临时名称')
+    await editor.fill('新节点')
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
+    const removableId = await page.evaluate(() => (
+      window.cy?.nodes().filter((node) => node.data('label') === '新节点').first().id() ?? ''
+    ))
+    expect(removableId).not.toBe('')
+
+    // 同名节点如果有注释就是有意义的用户数据，必须保留。
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await editor.fill('临时名称')
+    await editor.fill('新节点')
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
+    const protectedId = await page.evaluate((existingId) => (
+      window.cy?.nodes()
+        .filter((node) => node.id() !== existingId && node.data('label') === '新节点')
+        .first()
+        .id() ?? ''
+    ), removableId)
+    expect(protectedId).not.toBe('')
+
+    await page.evaluate((nodeId) => window.kgStore.selectAndFocus(nodeId), protectedId)
+    const note = page.locator('.detail-note-input')
+    await expect(note).toBeVisible()
+    await note.fill('这是需要保留的说明')
+    await page.locator('#cy').click({ position: { x: 10, y: 10 } })
+
+    await openDataMenu(page)
+    const cleanupButton = page.locator('#btn-cleanup-placeholders')
+    await expect(cleanupButton).toBeVisible()
+    await expect(cleanupButton).toHaveText('清理未完成节点（1）')
+
+    let cleanupMessage = ''
+    page.once('dialog', (dialog) => {
+      cleanupMessage = dialog.message()
+      return dialog.accept()
+    })
+    await cleanupButton.click()
+    expect(cleanupMessage).toContain(`技术 > ${removableId}`)
+    await expect.poll(() => page.evaluate((nodeId) => (
+      window.cy?.getElementById(nodeId).nonempty() ?? false
+    ), removableId)).toBe(false)
+    await expect.poll(() => page.evaluate((nodeId) => (
+      window.cy?.getElementById(nodeId).nonempty() ?? false
+    ), protectedId)).toBe(true)
+    await expect.poll(() => page.evaluate((nodeId) => (
+      window.cy?.getElementById(nodeId).data('label') ?? ''
+    ), protectedId)).toBe('新节点')
+
+    // 清理是一次原子历史操作，一次撤销即恢复被清理节点。
+    await page.locator('#cy').focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => page.evaluate((nodeId) => (
+      window.cy?.getElementById(nodeId).nonempty() ?? false
+    ), removableId)).toBe(true)
+    await expect.poll(() => page.evaluate((nodeId) => (
+      window.cy?.getElementById(nodeId).nonempty() ?? false
+    ), protectedId)).toBe(true)
+
+    await openDataMenu(page)
+    await expect(cleanupButton).toBeVisible()
+    await expect(cleanupButton).toHaveText('清理未完成节点（1）')
+  })
+
   test('思维导图中心主题不能通过删除键或空格拖拽移动', async ({ page }) => {
-    await openAppMenu(page)
-    page.once('dialog', (dialog) => dialog.accept('技术'))
-    await page.click('#btn-new-graph')
+    await createMindMap(page)
     await page.evaluate(() => window.kgStore.selectAndFocus('root'))
 
     await page.keyboard.press('Delete')

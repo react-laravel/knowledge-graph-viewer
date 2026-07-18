@@ -15,9 +15,12 @@ export class App {
   constructor() {
     this.store = initStore()
     this.graphList = []
-    this.saveTimer = null
+    this.saveTimers = new Map()
+    this.pendingSaveSnapshots = new Map()
+    this.saveQueue = Promise.resolve()
     this.savePromise = null
-    this.saveAgain = false
+    this.graphIdAliases = new Map()
+    this.deletedGraphIds = new Set()
   }
 
   async init() {
@@ -49,11 +52,13 @@ export class App {
 
     this.ui = new SidebarPanel(this.store, this.graph, this.editor, this.viewManager, this.detailPanel)
 
-    this.store.subscribe(() => {
+    this.store.subscribe((snapshot, change = {}) => {
       this.editor.onStoreUpdate()
       this._updateGraphSelector()
       this.viewManager.applyView()
-      this._scheduleSave()
+      if (!change.transient) {
+        this._scheduleSave(snapshot.currentGraphId, snapshot)
+      }
     })
 
     await this._loadGraphsFromApi()
@@ -92,58 +97,109 @@ export class App {
     }
   }
 
-  _scheduleSave(delay = 1000) {
-    if (this.saveTimer) clearTimeout(this.saveTimer)
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null
-      this._saveToApi()
+  _resolveGraphId(graphId) {
+    let current = String(graphId)
+    const visited = new Set()
+    while (this.graphIdAliases.has(current) && !visited.has(current)) {
+      visited.add(current)
+      current = this.graphIdAliases.get(current)
+    }
+    return current
+  }
+
+  _isServerGraphId(graphId) {
+    return /^\d+$/.test(String(graphId))
+  }
+
+  _scheduleSave(graphId, snapshot, delay = 1000) {
+    const id = String(graphId)
+    const previousTimer = this.saveTimers.get(id)
+    if (previousTimer) clearTimeout(previousTimer)
+    this.pendingSaveSnapshots.set(id, snapshot)
+    const timer = setTimeout(() => {
+      this.saveTimers.delete(id)
+      const pendingSnapshot = this.pendingSaveSnapshots.get(id)
+      this.pendingSaveSnapshots.delete(id)
+      if (pendingSnapshot) this._enqueueSave(id, pendingSnapshot)
     }, delay)
+    this.saveTimers.set(id, timer)
   }
 
-  async _saveToApi() {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
-    if (this.savePromise) {
-      this.saveAgain = true
-      return this.savePromise
-    }
-
-    this.savePromise = this._performSaveToApi()
-    try {
-      await this.savePromise
-    } finally {
-      this.savePromise = null
-      if (this.saveAgain) {
-        this.saveAgain = false
-        this._scheduleSave(0)
-      }
-    }
+  _cancelScheduledSave(graphId) {
+    const id = String(graphId)
+    const timer = this.saveTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.saveTimers.delete(id)
+    this.pendingSaveSnapshots.delete(id)
   }
 
-  async _performSaveToApi() {
+  _enqueueSave(graphId, snapshot) {
+    const task = this.saveQueue.then(() => this._performSaveToApi(graphId, snapshot))
+    this.saveQueue = task.catch(() => {})
+    this.savePromise = task
+    task.finally(() => {
+      if (this.savePromise === task) this.savePromise = null
+    })
+    return task
+  }
+
+  _saveToApi(graphId = this.store.getCurrentGraphId(), snapshot = null) {
+    const id = String(graphId)
+    const timer = this.saveTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.saveTimers.delete(id)
+
+    const pendingSnapshot = this.pendingSaveSnapshots.get(id)
+    this.pendingSaveSnapshots.delete(id)
+    const nextSnapshot = snapshot
+      ?? pendingSnapshot
+      ?? (this.store.exportPersistedData?.() ?? this.store.exportData())
+    return this._enqueueSave(id, nextSnapshot)
+  }
+
+  async _performSaveToApi(graphId, snapshot) {
+    const originalId = String(graphId)
+    const resolvedId = this._resolveGraphId(originalId)
+    if (this.deletedGraphIds.has(originalId) || this.deletedGraphIds.has(resolvedId)) return
+
     try {
-      const currentId = this.store.getCurrentGraphId()
-      const apiGraph = this.graphList.find((g) => String(g.id) === currentId)
-      const data = this.store.exportData()
-      const currentData = data.dataMap[currentId] ?? { nodes: [], edges: [] }
-      const graphMeta = this.store.getGraphs().find((g) => g.id === currentId)
+      const apiGraph = this.graphList.find((g) => String(g.id) === resolvedId)
+      const currentData = snapshot.dataMap[originalId]
+        ?? snapshot.dataMap[resolvedId]
+        ?? { nodes: [], edges: [] }
+      const graphMeta = snapshot.graphs.find((g) => String(g.id) === originalId)
+        ?? snapshot.graphs.find((g) => String(g.id) === resolvedId)
       const name = graphMeta?.name || apiGraph?.name || '未命名图谱'
       const description = graphMeta?.description ?? apiGraph?.description ?? ''
 
-      if (apiGraph) {
-        const updated = await knowledgeApi.update(Number(currentId), {
+      // 列表请求失败时 graphList 可能为空。纯数字 ID 仍是服务端图谱，
+      // 只能更新原记录，不能回退为 POST 后制造重复图谱。
+      if (apiGraph || this._isServerGraphId(resolvedId)) {
+        const updated = await knowledgeApi.update(Number(resolvedId), {
           name,
           description,
           data: currentData,
         })
-        Object.assign(apiGraph, updated)
-      } else {
-        const created = await knowledgeApi.create(name, description, currentData)
-        if (created?.id == null) throw new Error('创建图谱后未返回 ID')
-        this.graphList.unshift(created)
-        this.store.replaceGraphId(currentId, String(created.id), {
+        if (apiGraph) Object.assign(apiGraph, updated)
+        return
+      }
+
+      const created = await knowledgeApi.create(name, description, currentData)
+      if (created?.id == null) throw new Error('创建图谱后未返回 ID')
+
+      // 图谱可能在 POST 期间被用户删除；不要把已经删除的本地图谱重新带回列表。
+      if (this.deletedGraphIds.has(originalId)) {
+        try {
+          await knowledgeApi.delete(Number(created.id))
+        } catch {}
+        return
+      }
+
+      const createdId = String(created.id)
+      this.graphIdAliases.set(originalId, createdId)
+      this.graphList.unshift(created)
+      if (this.store.getGraphs().some((graph) => graph.id === originalId)) {
+        this.store.replaceGraphId(originalId, createdId, {
           name: created.name,
           description: created.description ?? description,
           updatedAt: created.updated_at,
@@ -174,6 +230,12 @@ export class App {
       getGraphs: () => this.store.getGraphs(),
       getCurrentGraphId: () => this.store.getCurrentGraphId(),
       switchGraph: (id) => {
+        if (!this.editor.resolveCurrentEdit?.()) {
+          this._updateGraphSelector()
+          return
+        }
+        const previousId = this.store.getCurrentGraphId()
+        if (id !== previousId) this._saveToApi(previousId)
         this.store.switchGraph(id)
         this.viewManager.loadForGraph(id)
         this.editor.deselect()
@@ -183,11 +245,14 @@ export class App {
         this.ui.closeAppMenuToCanvas()
       },
       createGraph: async () => {
+        if (!this.editor.resolveCurrentEdit?.()) return
+        const previousId = this.store.getCurrentGraphId()
         const name = prompt('新图谱名称：', '新图谱')
         if (!name) return
+        this._saveToApi(previousId)
         this.store.createGraph(name, '')
         this.viewManager.resetForGraph(this.store.getCurrentGraphId())
-        await this._saveToApi()
+        await this._saveToApi(this.store.getCurrentGraphId())
         this._updateGraphSelector()
         this.viewManager.applyView({ layout: true })
         this.editor.deselect()
@@ -196,14 +261,41 @@ export class App {
         this.ui.closeAppMenuToCanvas()
       },
       deleteGraph: async (id) => {
+        if (!this.editor.resolveCurrentEdit?.()) return
         const nodes = this.store.getAllNodes()
         const onlyCenterNode = nodes.length === 1 && this.store.isRootNode(nodes[0].id)
         if (!onlyCenterNode && !confirm('确定删除这个图谱吗？')) return
-        try {
-          await knowledgeApi.delete(Number(id))
-        } catch {}
-        this.store.deleteGraph(id)
-        this.graphList = this.graphList.filter((g) => String(g.id) !== id)
+        const graphId = String(id)
+        const resolvedId = this._resolveGraphId(graphId)
+        this.deletedGraphIds.add(graphId)
+        this.deletedGraphIds.add(resolvedId)
+        this._cancelScheduledSave(graphId)
+        if (resolvedId !== graphId) this._cancelScheduledSave(resolvedId)
+
+        // 本地临时图谱尚未 POST，直接删除即可；tombstone 会让已入队任务失效。
+        if (this._isServerGraphId(resolvedId)) {
+          try {
+            await knowledgeApi.delete(Number(resolvedId))
+          } catch (error) {
+            // 404 等价于服务端已经不存在，仍可完成本地删除。其他错误必须
+            // 恢复图谱和保存能力，不能留下永久 tombstone。
+            if (error?.status !== 404) {
+              this.deletedGraphIds.delete(graphId)
+              this.deletedGraphIds.delete(resolvedId)
+              const snapshot = this.store.exportPersistedData?.() ?? this.store.exportData()
+              this._scheduleSave(graphId, snapshot, 0)
+              SidebarPanel.showToast(error?.message || '删除图谱失败，请稍后重试', true)
+              this._updateGraphSelector()
+              return
+            }
+          }
+        }
+
+        this.store.deleteGraph(graphId)
+        this.graphList = this.graphList.filter((g) => {
+          const candidateId = String(g.id)
+          return candidateId !== graphId && candidateId !== resolvedId
+        })
         this.viewManager.loadForGraph(this.store.getCurrentGraphId())
         this.viewManager.applyView({ layout: true })
         this.editor.deselect()

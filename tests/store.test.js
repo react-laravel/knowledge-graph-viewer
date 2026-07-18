@@ -5,7 +5,7 @@ import { KnowledgeStore } from '../src/store.js'
 function createStore(initialData) {
   const store = new KnowledgeStore(initialData)
   const orig = store._notify.bind(store)
-  store._notify = () => orig()
+  store._notify = (...args) => orig(...args)
   return store
 }
 
@@ -141,6 +141,224 @@ describe('KnowledgeStore', () => {
       const id = store.addSiblingNode('root', '一级主题')
       expect(store.getHierarchyParentId(id)).toBe('root')
       expect(store.getNode(id).branchSide).toBe('right')
+    })
+  })
+
+  describe('draft nodes', () => {
+    it('草稿子节点应拒绝不存在的父节点，且不留下数据或历史', () => {
+      store.createGraph('技术')
+      const graphId = store.getCurrentGraphId()
+      const before = store.exportData().dataMap[graphId]
+      const historyLength = store._getUndoStack().length
+
+      expect(() => store.addDraftChildNode('missing-parent')).toThrow('父节点不存在')
+
+      const after = store.exportData().dataMap[graphId]
+      expect(after.nodes).toEqual(before.nodes)
+      expect(after.edges).toEqual(before.edges)
+      expect(store._getUndoStack()).toHaveLength(historyLength)
+    })
+
+    it('草稿同级节点应拒绝不存在的源节点，不得创建孤儿节点', () => {
+      store.createGraph('技术')
+      const graphId = store.getCurrentGraphId()
+      const before = store.exportData().dataMap[graphId]
+      const historyLength = store._getUndoStack().length
+
+      expect(() => store.addDraftSiblingNode('missing-source')).toThrow('节点不存在')
+
+      const after = store.exportData().dataMap[graphId]
+      expect(after.nodes).toEqual(before.nodes)
+      expect(after.edges).toEqual(before.edges)
+      expect(store._getUndoStack()).toHaveLength(historyLength)
+    })
+
+    it('草稿子节点只存在于工作数据，持久化快照应排除草稿及连线', () => {
+      store.createGraph('技术')
+      const listener = vi.fn()
+      store.subscribe(listener)
+
+      const id = store.addDraftChildNode('root')
+
+      expect(store.isDraftNode(id)).toBe(true)
+      expect(store.getHierarchyParentId(id)).toBe('root')
+      expect(store.exportData().dataMap[store.getCurrentGraphId()].nodes.some((node) => node.id === id)).toBe(true)
+      const persisted = store.exportPersistedData().dataMap[store.getCurrentGraphId()]
+      expect(persisted.nodes.some((node) => node.id === id)).toBe(false)
+      expect(persisted.edges.some((edge) => edge.source === id || edge.target === id)).toBe(false)
+      expect(listener).toHaveBeenLastCalledWith(expect.any(Object), { transient: true })
+    })
+
+    it('确认草稿不新增历史，一次 undo 应删除整个新节点', () => {
+      store.createGraph('技术')
+      const listener = vi.fn()
+      store.subscribe(listener)
+      const id = store.addDraftChildNode('root')
+      const historyLength = store._getUndoStack().length
+
+      expect(store.finalizeDraftNode(id, '  AI  ')).toBe(true)
+
+      expect(store.getNode(id)).toMatchObject({ id, label: 'AI' })
+      expect(store.getNode(id).draft).toBeUndefined()
+      expect(store._getUndoStack()).toHaveLength(historyLength)
+      expect(store.exportPersistedData().dataMap[store.getCurrentGraphId()].nodes.some((node) => node.id === id)).toBe(true)
+      expect(listener).toHaveBeenLastCalledWith(expect.any(Object), { transient: false })
+
+      expect(store.undo()).toBe(true)
+      expect(store.getNode(id)).toBeNull()
+      expect(store._currentData().edges.some((edge) => edge.source === id || edge.target === id)).toBe(false)
+    })
+
+    it('丢弃草稿应移除对应历史，之后 undo 不能复活', () => {
+      store.createGraph('技术')
+      const id = store.addDraftChildNode('root')
+      expect(store.canUndo()).toBe(true)
+
+      expect(store.discardDraftNode(id)).toBe(true)
+
+      expect(store.getNode(id)).toBeNull()
+      expect(store.canUndo()).toBe(false)
+      expect(store.undo()).toBe(false)
+    })
+
+    it('草稿复用已删除节点 ID 时，丢弃草稿不能破坏更早的撤销记录', () => {
+      store.createGraph('技术')
+      const originalId = store.addChildNode('root', '新节点')
+      store.deleteNode(originalId)
+
+      const draftId = store.addDraftChildNode('root')
+      expect(draftId).toBe(originalId)
+      expect(store.discardDraftNode(draftId)).toBe(true)
+
+      expect(store.undo()).toBe(true)
+      expect(store.getNode(originalId)).toMatchObject({ id: originalId, label: '新节点' })
+      expect(store.isDraftNode(originalId)).toBe(false)
+      expect(store.getHierarchyParentId(originalId)).toBe('root')
+    })
+
+    it('只允许丢弃明确草稿，旧的同名节点不能被当作草稿删除', () => {
+      const legacyId = store.addChildNode('a', '新节点')
+
+      expect(store.isDraftNode(legacyId)).toBe(false)
+      expect(store.finalizeDraftNode(legacyId, '正式名称')).toBe(false)
+      expect(store.discardDraftNode(legacyId)).toBe(false)
+      expect(store.getNode(legacyId)).not.toBeNull()
+    })
+
+    it('草稿同级节点应沿用原节点父级，中心节点的同级仍创建为子级', () => {
+      store.createGraph('技术')
+      const branchId = store.addChildNode('root', 'XPath')
+      const siblingId = store.addDraftSiblingNode(branchId)
+      expect(store.getHierarchyParentId(siblingId)).toBe('root')
+      expect(store.isDraftNode(siblingId)).toBe(true)
+      store.discardDraftNode(siblingId)
+
+      const rootSiblingId = store.addDraftSiblingNode('root')
+      expect(store.getHierarchyParentId(rootSiblingId)).toBe('root')
+      expect(store.isDraftNode(rootSiblingId)).toBe(true)
+    })
+
+    it('多个草稿交错丢弃后，历史快照也不能复活已丢弃节点', () => {
+      store.createGraph('技术')
+      const first = store.addDraftChildNode('root')
+      const second = store.addDraftChildNode('root')
+
+      expect(store.discardDraftNode(first)).toBe(true)
+      expect(store.finalizeDraftNode(second, '保留')).toBe(true)
+      expect(store.undo()).toBe(true)
+
+      expect(store.getNode(first)).toBeNull()
+      expect(store.getNode(second)).toBeNull()
+    })
+  })
+
+  describe('legacy placeholder cleanup', () => {
+    function createLegacyStore() {
+      return createStore({
+        graphs: [{ id: 'mindmap', name: '技术' }],
+        dataMap: {
+          mindmap: {
+            mode: 'mindmap',
+            rootNodeId: 'root',
+            nodes: [
+              { id: 'root', label: '技术', group: '', isRoot: true },
+              { id: 'AI', label: 'AI', group: '' },
+              { id: 'other-parent', label: '其他', group: '' },
+              { id: '新节点', label: '新节点', group: '' },
+              { id: '新节点_1', label: '新节点', group: '' },
+              { id: '新节点_2', label: 'AI', group: '' },
+              { id: '新节点_3', label: '新节点', group: '', description: '已写注释' },
+              { id: '新节点_4', label: '新节点', group: '', links: [{ title: '文档', url: 'https://example.com' }] },
+              { id: '新节点_5', label: '新节点', group: '', tags: ['保留'] },
+              { id: '新节点_6', label: '新节点', group: '' },
+              { id: '新节点_7', label: '新节点', group: '' },
+              { id: '新节点_8', label: '新节点', group: '', draft: true },
+              { id: 'custom-placeholder', label: '新节点', group: '' },
+            ],
+            edges: [
+              { id: 'h-ai', source: 'root', target: 'AI', type: '子节点', hierarchy: true },
+              { id: 'h-other', source: 'root', target: 'other-parent', type: '子节点', hierarchy: true },
+              { id: 'h-0', source: 'AI', target: '新节点', type: '子节点', hierarchy: true },
+              { id: 'h-1', source: 'other-parent', target: '新节点_1', type: '子节点', hierarchy: true },
+              { id: 'h-2', source: 'AI', target: '新节点_2', type: '子节点', hierarchy: true },
+              { id: 'h-3', source: 'AI', target: '新节点_3', type: '子节点', hierarchy: true },
+              { id: 'h-4', source: 'AI', target: '新节点_4', type: '子节点', hierarchy: true },
+              { id: 'h-5', source: 'AI', target: '新节点_5', type: '子节点', hierarchy: true },
+              { id: 'h-6', source: 'AI', target: '新节点_6', type: '子节点', hierarchy: true },
+              { id: 'h-7', source: '新节点_6', target: '新节点_7', type: '子节点', hierarchy: true },
+              { id: 'h-8', source: 'AI', target: '新节点_8', type: '子节点', hierarchy: true },
+              { id: 'h-custom', source: 'AI', target: 'custom-placeholder', type: '子节点', hierarchy: true },
+              { id: 'business', source: '新节点_1', target: 'AI', type: '参考' },
+            ],
+          },
+        },
+        currentGraphId: 'mindmap',
+      })
+    }
+
+    it('只识别无语义数据且仅有一条入向层级边的旧叶子占位节点', () => {
+      const legacyStore = createLegacyStore()
+
+      expect(legacyStore.findLegacyPlaceholderNodeIds()).toEqual(['新节点', '新节点_7'])
+      expect(legacyStore.findLegacyPlaceholderNodeIds({ parentId: 'AI' })).toEqual(['新节点'])
+      expect(legacyStore.findLegacyPlaceholderNodeIds({ parentId: '新节点_6' })).toEqual(['新节点_7'])
+    })
+
+    it('旧占位节点不会被自动排除出持久化数据', () => {
+      const legacyStore = createLegacyStore()
+      const persisted = legacyStore.exportPersistedData().dataMap.mindmap
+
+      expect(persisted.nodes.some((node) => node.id === '新节点')).toBe(true)
+      expect(persisted.nodes.some((node) => node.id === '新节点_8')).toBe(false)
+    })
+
+    it('清理时应重新校验候选，一次 undo 恢复本次实际删除的节点和边', () => {
+      const legacyStore = createLegacyStore()
+
+      const removed = legacyStore.cleanupLegacyPlaceholderNodes(['新节点', '新节点_2', '新节点_3'])
+
+      expect(removed).toEqual(['新节点'])
+      expect(legacyStore.getNode('新节点')).toBeNull()
+      expect(legacyStore.getNode('新节点_2')).not.toBeNull()
+      expect(legacyStore.getNode('新节点_3')).not.toBeNull()
+      expect(legacyStore.undo()).toBe(true)
+      expect(legacyStore.getNode('新节点')).not.toBeNull()
+      expect(legacyStore.getEdge('h-0')).not.toBeNull()
+    })
+
+    it('未指定 IDs 时只清理当前严格候选，并在确实无候选时不增加历史', () => {
+      const legacyStore = createLegacyStore()
+      expect(legacyStore.cleanupLegacyPlaceholderNodes()).toEqual(['新节点', '新节点_7'])
+      expect(legacyStore.getNode('新节点')).toBeNull()
+      expect(legacyStore.getNode('新节点_7')).toBeNull()
+      expect(legacyStore.getNode('新节点_6')).not.toBeNull()
+
+      // 原本有子节点的占位节点只会在下一次显式清理时成为严格叶子候选。
+      expect(legacyStore.cleanupLegacyPlaceholderNodes()).toEqual(['新节点_6'])
+
+      const historyLength = legacyStore._getUndoStack().length
+      expect(legacyStore.cleanupLegacyPlaceholderNodes()).toEqual([])
+      expect(legacyStore._getUndoStack()).toHaveLength(historyLength)
     })
   })
 

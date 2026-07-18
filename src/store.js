@@ -28,6 +28,31 @@ function isExplicitRoot(node) {
   return node?.isRoot === true || node?.isRoot === 'yes'
 }
 
+const LEGACY_PLACEHOLDER_ID_RE = /^新节点(?:_\d+)?$/
+const NON_SEMANTIC_PLACEHOLDER_FIELDS = new Set([
+  'id',
+  'label',
+  'group',
+  'parent',
+  'branchSide',
+  'isRoot',
+  'draft',
+])
+
+function hasMeaningfulValue(value) {
+  if (value == null || value === false) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+function hasSemanticNodeData(node) {
+  return Object.entries(node).some(([key, value]) => (
+    !NON_SEMANTIC_PLACEHOLDER_FIELDS.has(key) && hasMeaningfulValue(value)
+  ))
+}
+
 export class KnowledgeStore {
   graphs = []
   dataMap = {}
@@ -36,6 +61,7 @@ export class KnowledgeStore {
   undoStacks = {}
   redoStacks = {}
   _edgeIdCounter = 0
+  _draftHistoryEntries = {}
 
   constructor(initialData) {
     this.graphs = initialData?.graphs ?? [
@@ -73,15 +99,53 @@ export class KnowledgeStore {
 
   _pushHistory() {
     const data = this._currentData()
-    this._getUndoStack().push({ nodes: data.nodes.map((n) => ({ ...n })), edges: data.edges.map((e) => ({ ...e })) })
+    const entry = { nodes: data.nodes.map((n) => ({ ...n })), edges: data.edges.map((e) => ({ ...e })) }
+    this._getUndoStack().push(entry)
     if (this._getUndoStack().length > 50) this._getUndoStack().shift()
     this._getRedoStack().length = 0
+    return entry
   }
 
-  _notify() {
-    const snapshot = this.exportData()
+  _notify({ transient = false } = {}) {
+    const snapshot = this.exportPersistedData()
     saveToStorage(snapshot)
-    this.listeners.forEach((fn) => fn(snapshot))
+    this.listeners.forEach((fn) => fn(snapshot, { transient }))
+  }
+
+  _rememberDraftHistory(nodeId, entry) {
+    if (!this._draftHistoryEntries[this.currentGraphId]) {
+      this._draftHistoryEntries[this.currentGraphId] = new Map()
+    }
+    this._draftHistoryEntries[this.currentGraphId].set(nodeId, entry)
+  }
+
+  _forgetDraftHistory(nodeId, { discard = false } = {}) {
+    const graphId = this.currentGraphId
+    const entries = this._draftHistoryEntries[graphId]
+    const origin = entries?.get(nodeId)
+    entries?.delete(nodeId)
+    if (!discard) return
+
+    const stack = this._getUndoStack()
+    const originIndex = origin ? stack.indexOf(origin) : -1
+    if (origin) {
+      if (originIndex >= 0) stack.splice(originIndex, 1)
+    }
+
+    const removeDraftFromSnapshot = (snapshot) => {
+      const containsThisDraft = snapshot.nodes.some(
+        (node) => node.id === nodeId && node.draft === true
+      )
+      if (!containsThisDraft) return
+      snapshot.nodes = snapshot.nodes.filter((node) => node.id !== nodeId)
+      snapshot.edges = snapshot.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
+    }
+
+    // 只清理草稿创建之后产生的历史。更早的历史里可能存在一个已删除、
+    // 后来被草稿复用同一 ID 的正式节点，不能把它从撤销记录中误删。
+    const newerHistory = originIndex >= 0 ? stack.slice(originIndex) : stack
+    newerHistory.forEach(removeDraftFromSnapshot)
+    this._getRedoStack().forEach(removeDraftFromSnapshot)
   }
 
   // === 节点操作 ===
@@ -324,6 +388,117 @@ export class KnowledgeStore {
     this._notify()
   }
 
+  isDraftNode(id) {
+    return this.getNode(id)?.draft === true
+  }
+
+  addDraftChildNode(parentId) {
+    if (parentId && !this.getNode(parentId)) throw new Error('父节点不存在')
+
+    const id = this.generateNodeId('新节点')
+    const node = { id, label: '新节点', group: '', draft: true }
+    if (parentId && this.isRootNode(parentId)) {
+      node.branchSide = this._nextRootBranchSide(parentId)
+    }
+
+    const historyEntry = this._pushHistory()
+    this.dataMap[this.currentGraphId].nodes.push(node)
+    if (parentId) {
+      this.dataMap[this.currentGraphId].edges.push({
+        id: `e_${Date.now()}_${this._nextEdgeId()}`,
+        source: parentId,
+        target: id,
+        type: '子节点',
+        hierarchy: true,
+      })
+    }
+    this._rememberDraftHistory(id, historyEntry)
+    this._notify({ transient: true })
+    return id
+  }
+
+  addDraftSiblingNode(nodeId) {
+    if (!this.getNode(nodeId)) throw new Error('节点不存在')
+    if (this.isRootNode(nodeId)) return this.addDraftChildNode(nodeId)
+    return this.addDraftChildNode(this.getParentId(nodeId))
+  }
+
+  finalizeDraftNode(id, label) {
+    const node = this.getNode(id)
+    if (!node || node.draft !== true) return false
+    const trimmedLabel = String(label ?? '').trim()
+    if (!trimmedLabel) throw new Error('节点名称不能为空')
+
+    node.label = trimmedLabel
+    delete node.draft
+    this._forgetDraftHistory(id)
+    this._notify()
+    return true
+  }
+
+  discardDraftNode(id) {
+    const node = this.getNode(id)
+    if (!node || node.draft !== true || this.isRootNode(id)) return false
+
+    this.dataMap[this.currentGraphId].nodes = this._currentData().nodes.filter((item) => item.id !== id)
+    this.dataMap[this.currentGraphId].edges = this._currentData().edges.filter(
+      (edge) => edge.source !== id && edge.target !== id
+    )
+    this._forgetDraftHistory(id, { discard: true })
+    this._notify({ transient: true })
+    return true
+  }
+
+  findLegacyPlaceholderNodeIds({ parentId } = {}) {
+    const { nodes, edges } = this._currentData()
+    const rootId = this.getMindMapRootId()
+    const nodeIds = new Set(nodes.map((node) => node.id))
+
+    return nodes
+      .filter((node) => {
+        if (
+          node.id === rootId
+          || isExplicitRoot(node)
+          || node.draft === true
+          || node.label !== '新节点'
+          || !LEGACY_PLACEHOLDER_ID_RE.test(node.id)
+          || hasMeaningfulValue(node.group)
+          || hasMeaningfulValue(node.parent)
+          || hasSemanticNodeData(node)
+        ) return false
+
+        const incidentEdges = edges.filter((edge) => edge.source === node.id || edge.target === node.id)
+        if (incidentEdges.length !== 1) return false
+        const incomingHierarchy = incidentEdges[0]
+        if (
+          incomingHierarchy.target !== node.id
+          || !isHierarchyEdge(incomingHierarchy)
+          || !nodeIds.has(incomingHierarchy.source)
+        ) return false
+        return parentId === undefined || incomingHierarchy.source === parentId
+      })
+      .map((node) => node.id)
+  }
+
+  cleanupLegacyPlaceholderNodes(ids) {
+    const candidates = this.findLegacyPlaceholderNodeIds()
+    const candidateIds = new Set(candidates)
+    const requestedIds = ids === undefined
+      ? candidates
+      : [...new Set(Array.isArray(ids) ? ids : [ids])]
+    const removableIds = requestedIds.filter((id) => candidateIds.has(id))
+    if (removableIds.length === 0) return []
+
+    const removing = new Set(removableIds)
+    this._pushHistory()
+    this.dataMap[this.currentGraphId].nodes = this._currentData().nodes.filter((node) => !removing.has(node.id))
+    this.dataMap[this.currentGraphId].edges = this._currentData().edges.filter(
+      (edge) => !removing.has(edge.source) && !removing.has(edge.target)
+    )
+    this._notify()
+    return removableIds
+  }
+
   addChildNode(parentId, label = '新节点') {
     const trimmedLabel = label.trim() || '新节点'
     const id = this.generateNodeId(trimmedLabel)
@@ -545,6 +720,28 @@ export class KnowledgeStore {
     }
   }
 
+  exportPersistedData() {
+    const data = this.exportData()
+    data.dataMap = Object.fromEntries(
+      Object.entries(data.dataMap).map(([graphId, graphData]) => {
+        const draftIds = new Set(
+          (graphData.nodes ?? []).filter((node) => node.draft === true).map((node) => node.id)
+        )
+        return [
+          graphId,
+          {
+            ...graphData,
+            nodes: (graphData.nodes ?? []).filter((node) => !draftIds.has(node.id)),
+            edges: (graphData.edges ?? []).filter(
+              (edge) => !draftIds.has(edge.source) && !draftIds.has(edge.target)
+            ),
+          },
+        ]
+      })
+    )
+    return data
+  }
+
   toCytoscapeElements({ aggregateNodes = [] } = {}) {
     const { nodes, edges } = this._currentData()
     const enriched = enrichEdges(edges)
@@ -641,6 +838,7 @@ export class KnowledgeStore {
   _clearHistory() {
     this.undoStacks[this.currentGraphId] = []
     this.redoStacks[this.currentGraphId] = []
+    delete this._draftHistoryEntries[this.currentGraphId]
   }
 
   _generateId() {
@@ -711,6 +909,7 @@ export class KnowledgeStore {
     delete this.dataMap[graphId]
     delete this.undoStacks[graphId]
     delete this.redoStacks[graphId]
+    delete this._draftHistoryEntries[graphId]
     this._notify()
   }
 
@@ -745,6 +944,10 @@ export class KnowledgeStore {
       if (this.redoStacks[oldKey]) {
         this.redoStacks[newKey] = this.redoStacks[oldKey]
         delete this.redoStacks[oldKey]
+      }
+      if (this._draftHistoryEntries[oldKey]) {
+        this._draftHistoryEntries[newKey] = this._draftHistoryEntries[oldKey]
+        delete this._draftHistoryEntries[oldKey]
       }
       if (this.currentGraphId === oldKey) this.currentGraphId = newKey
     }

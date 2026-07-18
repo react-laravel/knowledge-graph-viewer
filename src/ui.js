@@ -344,7 +344,7 @@ export class SidebarPanel {
 
   _initButtons() {
     document.getElementById('btn-export').addEventListener('click', () => {
-      exportJson(this.store.exportData())
+      exportJson(this.store.exportPersistedData?.() ?? this.store.exportData())
       SidebarPanel.showToast('已导出 JSON')
     })
 
@@ -384,6 +384,38 @@ export class SidebarPanel {
       this._closeMenuToCanvas()
     })
 
+    document.getElementById('btn-cleanup-placeholders')?.addEventListener('click', () => {
+      const candidateIds = this.store.findLegacyPlaceholderNodeIds?.() ?? []
+      if (candidateIds.length === 0) {
+        SidebarPanel.showToast('没有可清理的未完成节点')
+        this._updateCleanupButton()
+        return
+      }
+      const preview = candidateIds.slice(0, 8).map((nodeId) => {
+        const parentId = this.store.getHierarchyParentId?.(nodeId)
+        const parentLabel = parentId ? this.store.getNode(parentId)?.label || parentId : '无父节点'
+        return `• ${String(parentLabel).replace(/\s+/g, ' ')} > ${nodeId}`
+      }).join('\n')
+      const remaining = candidateIds.length > 8 ? `\n…以及另外 ${candidateIds.length - 8} 个` : ''
+      const message = `发现 ${candidateIds.length} 个名称为“新节点”、没有内容、业务关系或子节点的候选项：\n\n${preview}${remaining}\n\n请确认它们确实是未完成节点。清理后可在离开图谱前使用撤销恢复。`
+      if (!confirm(message)) return
+
+      const deletedIds = this.store.cleanupLegacyPlaceholderNodes?.(candidateIds) ?? []
+      if (deletedIds.length === 0) {
+        SidebarPanel.showToast('没有可清理的未完成节点')
+        this._updateCleanupButton()
+        return
+      }
+      if (this.currentSelection && deletedIds.includes(this.currentSelection.id)) {
+        this.currentSelection = null
+        this.editor.deselect()
+      }
+      this._syncSelectionUi()
+      this._updateCleanupButton()
+      SidebarPanel.showToast(`已清理 ${deletedIds.length} 个未完成节点，可撤销`)
+      this._closeMenuToCanvas()
+    })
+
     document.getElementById('btn-layout').addEventListener('click', () => {
       this.graph.runLayout()
       this._closeMenuToCanvas()
@@ -408,7 +440,8 @@ export class SidebarPanel {
     })
     this.addChildNodeButton?.addEventListener('click', (event) => {
       event.stopPropagation()
-      const parentId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      const parentId = this._getValidNodeActionId()
+      if (!parentId) return
       const childId = this.editor.createChild(parentId)
       if (!childId) return
       this.currentSelection = { type: 'node', id: childId }
@@ -416,7 +449,8 @@ export class SidebarPanel {
     })
     this.addSiblingNodeButton?.addEventListener('click', (event) => {
       event.stopPropagation()
-      const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      const nodeId = this._getValidNodeActionId()
+      if (!nodeId) return
       const siblingId = this.editor.createSibling(nodeId)
       if (!siblingId) return
       this.currentSelection = { type: 'node', id: siblingId }
@@ -437,6 +471,30 @@ export class SidebarPanel {
       this.cancelMoveMode({ toast: true })
     })
     this._updateNodeActionBar()
+  }
+
+  /**
+   * 操作栏按钮的 mousedown 会先让节点编辑框失焦。未命名草稿会在此时被删除，
+   * 所以 click 阶段必须以 editor 的实时选择为准，不能继续使用 UI 中的旧 ID。
+   */
+  _getValidNodeActionId() {
+    const nodeId = this.editor.selectedNodeId
+    const node = nodeId ? this.store.getNode(nodeId) : null
+    if (node && node.group !== 'org') {
+      this.currentSelection = { type: 'node', id: nodeId }
+      return nodeId
+    }
+
+    const editorSelection = this._getEditorSelection()
+    if (editorSelection?.type === 'node' && this.store.getNode(editorSelection.id)) {
+      this.currentSelection = editorSelection
+    } else if (editorSelection?.type === 'edge' && this.store.getEdge(editorSelection.id)) {
+      this.currentSelection = editorSelection
+    } else {
+      this.currentSelection = null
+    }
+    this._syncSelectionUi()
+    return null
   }
 
   startMoveMode() {
@@ -853,6 +911,22 @@ export class SidebarPanel {
 
   _initStoreListener() {
     this.store.subscribe(() => {
+      let selectionChanged = false
+      if (this.currentSelection) {
+        const selectionExists = this.currentSelection.type === 'node'
+          ? !!this.store.getNode(this.currentSelection.id)
+          : !!this.store.getEdge(this.currentSelection.id)
+        if (!selectionExists) {
+          const editorSelection = this._getEditorSelection()
+          const editorSelectionExists = editorSelection?.type === 'node'
+            ? !!this.store.getNode(editorSelection.id)
+            : editorSelection?.type === 'edge'
+              ? !!this.store.getEdge(editorSelection.id)
+              : false
+          this.currentSelection = editorSelectionExists ? editorSelection : null
+          selectionChanged = true
+        }
+      }
       if (this.moveSourceId && !this.store.getNode(this.moveSourceId)) this.cancelMoveMode()
       if (this.searchQuery.trim()) {
         const { nodeIds, edgeIds } = this.store.search(this.searchQuery)
@@ -860,6 +934,8 @@ export class SidebarPanel {
       }
       this._renderTree()
       this._renderAggregateActions()
+      this._updateCleanupButton()
+      if (selectionChanged) this._syncSelectionUi()
       this.viewManager.applyView()
     })
   }
@@ -1267,6 +1343,15 @@ export class SidebarPanel {
 
   _updateButtonStates() {
     this._syncSearchControls()
+    this._updateCleanupButton()
+  }
+
+  _updateCleanupButton() {
+    const button = document.getElementById('btn-cleanup-placeholders')
+    if (!button) return
+    const count = this.store.findLegacyPlaceholderNodeIds?.().length ?? 0
+    button.hidden = count === 0
+    button.textContent = count > 0 ? `清理未完成节点（${count}）` : '清理未完成节点'
   }
 
   static showToast(message, isError = false) {

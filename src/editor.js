@@ -17,6 +17,7 @@ export class InlineEditor {
     this.moveModeActive = false
     this.isComposing = false
     this.editStartLabel = ''
+    this.editDirty = false
     this.textHistory = []
     this.textHistoryIndex = -1
 
@@ -82,7 +83,10 @@ export class InlineEditor {
 
     // Node input 事件
     this.nodeInput.addEventListener('input', () => {
-      if (this.editingNodeId) this._recordTextState()
+      if (this.editingNodeId) {
+        this.editDirty = true
+        this._recordTextState()
+      }
     })
 
     this.nodeInput.addEventListener('compositionstart', () => {
@@ -120,16 +124,19 @@ export class InlineEditor {
       if (e.key === 'Escape') {
         e.preventDefault()
         this.graph.cancelPendingSelection?.()
-        this.nodeInput.value = this.editStartLabel
-        this._resetTextHistory(this.editStartLabel)
-        this.stopEdit()
+        if (this.store.isDraftNode?.(this.editingNodeId)) {
+          this._discardCurrentDraft()
+        } else {
+          this.nodeInput.value = this.editStartLabel
+          this._resetTextHistory(this.editStartLabel)
+          this.stopEdit()
+        }
         return
       }
     })
 
     this.nodeInput.addEventListener('blur', () => {
-      if (this.editingNodeId) this.commitEdit()
-      this.editingNodeId = null
+      if (this.editingNodeId) this.resolveCurrentEdit()
     })
 
     // 全局键盘事件
@@ -176,7 +183,7 @@ export class InlineEditor {
         if (!this.selectedNodeId) {
           const nodes = this.store.getAllNodes()
           if (nodes.length === 0) {
-            const id = this.store.addChildNode(null, '新节点')
+            const id = this.store.addDraftChildNode(null)
             this.selectNode(id)
             this.startEdit(id)
           } else {
@@ -307,12 +314,14 @@ export class InlineEditor {
   }
 
   deselect() {
+    if (!this.resolveCurrentEdit()) return false
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
     this.selectedNodeId = null
-    this.stopEdit()
     this.clearEdgeSelection()
     this.cancelLinkMode()
     this.graph.setSelected(null)
     this.hideOverlay()
+    return true
   }
 
   hideOverlay() {
@@ -352,12 +361,12 @@ export class InlineEditor {
   }
 
   startLinkMode() {
+    if (!this.resolveCurrentEdit()) return
     if (!this.selectedNodeId) {
       InlineEditor.showToast('请先选中源节点', true)
       return
     }
     this.onLinkModeStart?.()
-    if (this.editingNodeId) this.commitEdit()
     this.clearEdgeSelection()
     this.linkSourceId = this.selectedNodeId
     this.graph.setLinkSource(this.linkSourceId)
@@ -371,7 +380,8 @@ export class InlineEditor {
 
   linkNodes(sourceId, targetId) {
     if (!sourceId || !targetId || sourceId === targetId) return false
-    if (this.editingNodeId) this.commitEdit()
+    if (!this.resolveCurrentEdit()) return false
+    if (!this.store.getNode(sourceId) || !this.store.getNode(targetId)) return false
 
     try {
       const edgeId = this.store.addEdge({ source: sourceId, target: targetId, type: '关联' })
@@ -447,6 +457,7 @@ export class InlineEditor {
     this.editingNodeId = nodeId
     this.selectedNodeId = nodeId
     this.editStartLabel = node.label
+    this.editDirty = false
     this.graph.setSelected(nodeId)
     this.showNodeEditor(nodeId)
     this.nodeInput.readOnly = false
@@ -454,13 +465,18 @@ export class InlineEditor {
       if (this.editingNodeId !== nodeId) return
       if (!this._updateOverlayPosition(nodeId)) return
       this.nodeInput.focus()
-      const len = this.nodeInput.value.length
-      this.nodeInput.setSelectionRange(len, len)
+      if (this.store.isDraftNode?.(nodeId)) {
+        this.nodeInput.select()
+      } else {
+        const len = this.nodeInput.value.length
+        this.nodeInput.setSelectionRange(len, len)
+      }
     })
   }
 
   stopEdit() {
     this.editingNodeId = null
+    this.editDirty = false
     this.graph.setNodeEditing(null, false)
     this.nodeInput.readOnly = true
     this.overlay.classList.remove('editing')
@@ -470,6 +486,15 @@ export class InlineEditor {
 
   commitEdit() {
     if (!this.editingNodeId) return true
+    const nodeId = this.editingNodeId
+    const isDraft = this.store.isDraftNode?.(nodeId) ?? false
+    if (isDraft && !this.editDirty) {
+      InlineEditor.showToast('请先输入节点名称', true)
+      this.nodeInput.focus()
+      this.nodeInput.select()
+      return false
+    }
+
     const label = this.nodeInput.value.trim()
     if (!label) {
       InlineEditor.showToast('节点名称不能为空', true)
@@ -477,9 +502,11 @@ export class InlineEditor {
       return false
     }
     try {
-      this.store.updateNode(this.editingNodeId, { label })
+      if (isDraft) this.store.finalizeDraftNode(nodeId, label)
+      else this.store.updateNode(nodeId, { label })
       this.graph.setNodeEditing(null, false)
       this.editingNodeId = null
+      this.editDirty = false
       this.hideOverlay()
       return true
     } catch (e) {
@@ -488,9 +515,41 @@ export class InlineEditor {
     }
   }
 
+  /**
+   * 结束当前节点编辑：未输入过的新节点是草稿，离开时直接丢弃；
+   * 输入过的草稿和普通节点则正常保存。切换图谱前也应调用此方法。
+   */
+  resolveCurrentEdit() {
+    if (!this.editingNodeId) return true
+
+    const nodeId = this.editingNodeId
+    const isDraft = this.store.isDraftNode?.(nodeId) ?? false
+    const label = this.nodeInput.value.trim()
+
+    if (isDraft && (!this.editDirty || !label)) {
+      return this._discardCurrentDraft()
+    }
+
+    if (!label) {
+      // 已存在节点不能变成空名；离开编辑时恢复原名称。
+      this.nodeInput.value = this.editStartLabel
+      this._resetTextHistory(this.editStartLabel)
+      this.stopEdit()
+      return true
+    }
+
+    const committed = this.commitEdit()
+    if (committed) this.stopEdit()
+    return committed
+  }
+
   handleUndo() {
     if (this.editingNodeId) {
       if (this._undoText()) return
+      if (this.store.isDraftNode?.(this.editingNodeId)) {
+        this._discardCurrentDraft()
+        return
+      }
       this._applyGraphHistory(() => this.store.undo())
       return
     }
@@ -510,7 +569,7 @@ export class InlineEditor {
     if (!fromId) return null
     if (!this.commitEdit()) return null
 
-    const childId = this.store.addChildNode(fromId)
+    const childId = this.store.addDraftChildNode(fromId)
     this.onNodeCreated?.(childId, fromId)
     this.graph.positionNearParent(fromId, childId)
     this.selectNode(childId)
@@ -524,7 +583,7 @@ export class InlineEditor {
 
     // 中心主题没有“同级”。与 XMind 一致，Enter 在中心主题上创建一级主题。
     if (this.store.isRootNode?.(fromId)) {
-      const childId = this.store.addChildNode(fromId)
+      const childId = this.store.addDraftChildNode(fromId)
       this.onNodeCreated?.(childId, fromId)
       this.graph.positionNearParent(fromId, childId)
       this.selectNode(childId)
@@ -532,7 +591,7 @@ export class InlineEditor {
       return childId
     }
 
-    const siblingId = this.store.addSiblingNode(fromId)
+    const siblingId = this.store.addDraftSiblingNode(fromId)
     const parentId = this.store.getParentId(fromId)
     this.onNodeCreated?.(siblingId, parentId)
     if (parentId) this.graph.positionNearParent(parentId, siblingId)
@@ -577,6 +636,22 @@ export class InlineEditor {
       InlineEditor.showToast('中心主题不能删除', true)
       return
     }
+    if (this.store.isDraftNode?.(nodeId)) {
+      const wasSelected = this.selectedNodeId === nodeId
+      try {
+        this.store.discardDraftNode(nodeId)
+      } catch (error) {
+        InlineEditor.showToast(error.message, true)
+        return
+      }
+      if (wasSelected) {
+        this.selectedNodeId = null
+        this.stopEdit()
+        this.graph.setSelected(null)
+        this.onDeselect?.()
+      }
+      return
+    }
     if (!confirm(`确定删除节点「${node.label}」吗？`)) return
     try {
       this.store.deleteNode(nodeId)
@@ -619,6 +694,10 @@ export class InlineEditor {
   }
 
   onNodeSelect(nodeId, { shiftLink = false } = {}) {
+    if (this.editingNodeId && this.editingNodeId !== nodeId) {
+      if (!this.resolveCurrentEdit()) return false
+    }
+
     if (this.linkSourceId) {
       if (this.linkSourceId === nodeId) {
         this.cancelLinkMode()
@@ -640,13 +719,7 @@ export class InlineEditor {
       return false
     }
 
-    if (this.editingNodeId && this.editingNodeId !== nodeId) {
-      if (!this.commitEdit()) {
-        this.nodeInput.value = this.editStartLabel
-        this.stopEdit()
-      }
-    }
-    if (this.editingEdgeId) this.commitEdgeEdit()
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
 
     this.clearEdgeSelection()
     this.cancelLinkMode()
@@ -657,7 +730,7 @@ export class InlineEditor {
   }
 
   onEdgeSelect(edgeId) {
-    if (this.editingNodeId) this.commitEdit()
+    if (!this.resolveCurrentEdit()) return false
     this.cancelLinkMode()
 
     this.selectedNodeId = null
@@ -665,22 +738,25 @@ export class InlineEditor {
     this.selectedEdgeId = edgeId
     this.graph.setSelected(edgeId)
     this.showEdgeEditor(edgeId)
+    return true
   }
 
   onCanvasDeselect() {
-    if (this.editingNodeId) this.commitEdit()
-    if (this.editingEdgeId) this.commitEdgeEdit()
+    if (!this.resolveCurrentEdit()) return false
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
     this.cancelLinkMode()
     this.selectedNodeId = null
     this.clearEdgeSelection()
     this.hideOverlay()
     this.graph.setSelected(null)
+    return true
   }
 
   onStoreUpdate() {
     if (this.selectedNodeId && !this.store.getNode(this.selectedNodeId)) {
       this.selectedNodeId = null
       this.editingNodeId = null
+      this.editDirty = false
       this.hideOverlay()
     }
     if (this.selectedEdgeId && !this.store.getEdge(this.selectedEdgeId)) {
@@ -702,13 +778,46 @@ export class InlineEditor {
 
   // === 私有方法 ===
 
+  _discardCurrentDraft() {
+    const nodeId = this.editingNodeId
+    if (!nodeId || !this.store.isDraftNode?.(nodeId)) return false
+
+    const wasDirty = this.editDirty
+    const wasSelected = this.selectedNodeId === nodeId
+    try {
+      // 先清编辑状态，避免 discard 的同步 store 通知再次解析同一草稿。
+      this.editingNodeId = null
+      this.editDirty = false
+      if (wasSelected) this.selectedNodeId = null
+      if (!this.store.discardDraftNode(nodeId)) throw new Error('新节点草稿已不存在')
+      this.stopEdit()
+      return true
+    } catch (e) {
+      this.editingNodeId = nodeId
+      this.editDirty = wasDirty
+      if (wasSelected) this.selectedNodeId = nodeId
+      this.graph.setNodeEditing(nodeId, true)
+      InlineEditor.showToast(e.message, true)
+      return false
+    }
+  }
+
   _applyGraphHistory(action) {
     const keepNodeId = this.selectedNodeId
     const wasEditing = !!this.editingNodeId
+    const editingNodeId = this.editingNodeId
+    const editDirty = this.editDirty
     this.editingNodeId = null
+    this.editDirty = false
 
     const ok = action()
-    if (!ok) return false
+    if (!ok) {
+      // 没有可撤销/重做内容时，编辑器必须维持原状态；否则后续 blur
+      // 不会再解析草稿，未完成节点会滞留在当前会话的画布上。
+      this.editingNodeId = editingNodeId
+      this.editDirty = editDirty
+      return false
+    }
 
     if (keepNodeId && this.store.getNode(keepNodeId)) {
       this.selectedNodeId = keepNodeId
