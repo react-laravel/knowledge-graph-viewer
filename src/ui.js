@@ -1104,7 +1104,7 @@ export class SidebarPanel {
       : ''
 
     return `
-      <div class="tree-node ${selectedClass}" data-id="${node.id}" style="padding-left: ${6 + depth * 16}px">
+      <div class="tree-node ${selectedClass}" data-id="${node.id}" style="padding-left: ${4 + depth * 10}px">
         <span class="tree-toggle ${toggleClass}" data-toggle="${node.id}"${hasChildren ? ` onclick="event.stopPropagation();window._kgToggle('${node.id}')"` : ''}>${toggleIcon}</span>
         <span class="${labelClass}" data-select="${node.id}">${SidebarPanel.escapeHtml(node.label)}</span>
         <span class="tree-actions">

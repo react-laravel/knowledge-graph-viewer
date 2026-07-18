@@ -1308,7 +1308,7 @@ select:focus {
 }
 
 .tree-children {
-  padding-left: 16px;
+  padding-left: 0;
   overflow: hidden;
 }
 
