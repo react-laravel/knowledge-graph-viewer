@@ -953,6 +953,7 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
       'font-size': 11,
       'font-family': 'PingFang SC, Microsoft YaHei, sans-serif',
       'text-wrap': 'wrap',
+      'text-overflow-wrap': 'anywhere',
       'text-max-width': 72,
       width: 'label',
       height: 'label',
