@@ -766,6 +766,8 @@ export class SidebarPanel {
     document.getElementById('timeline-section')?.classList.toggle('hidden', !showRedChamberFeatures)
     document.getElementById('network-layout-section')?.classList.toggle('hidden', isMindMap)
     document.getElementById('mindmap-layout-section')?.classList.toggle('hidden', !isMindMap)
+    // 思维导图中心主题固定，侧栏「设为中心 / 恢复默认」无实际作用，整块隐藏。
+    document.getElementById('advanced-view-section')?.classList.toggle('hidden', isMindMap)
     const viewModeSelect = document.getElementById('view-mode-select')
     if (viewModeSelect) viewModeSelect.value = st.viewMode
     this._syncFocusDepthControl(st)
@@ -833,16 +835,8 @@ export class SidebarPanel {
     const st = this.viewManager.getState()
     if (!label) return
 
-    const mindMapRootId = this.store.getMindMapRootId?.()
-    if (mindMapRootId) {
-      const root = this.store.getNode(mindMapRootId)
-      if (title) title.textContent = '中心主题'
-      label.textContent = root?.label ?? '—'
-      wrap?.classList.remove('muted')
-      btn?.setAttribute('disabled', 'disabled')
-      setBtn?.setAttribute('disabled', 'disabled')
-      return
-    }
+    // 思维导图侧栏已隐藏该区块，无需同步展示状态。
+    if (this.store.getMindMapRootId?.()) return
 
     if (title) title.textContent = '当前中心'
 

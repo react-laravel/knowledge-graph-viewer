@@ -441,9 +441,8 @@ test.describe('知识图谱编辑器 - E2E', () => {
       grabbable: false,
     })
     await expect(page.locator('#view-mode-select')).toHaveValue('full')
-    await expect(page.locator('#focus-center-label')).toHaveText('中心主题')
-    await expect(page.locator('#val-focus-node')).toHaveText('技术')
-    await expect(page.locator('#btn-set-focus')).toBeDisabled()
+    // 思维导图中心固定，侧栏高级视图设置（设为中心等）不展示。
+    await expect(page.locator('#advanced-view-section')).toHaveClass(/hidden/)
     await expect(page.locator('#network-layout-section')).toHaveClass(/hidden/)
     await expect(page.locator('#mindmap-layout-section')).not.toHaveClass(/hidden/)
 
@@ -557,8 +556,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
     const aiId = await page.evaluate(() => window.cy?.nodes('.node-editing').first().id() || '')
     expect(aiId).not.toBe('')
     await selectViewMode(page, 'focus')
-    await expect(page.locator('#val-focus-node')).toHaveText('技术')
-    await expect(page.locator('#val-focus-depth')).toHaveText('1')
+    await expect(page.locator('#advanced-view-section')).toHaveClass(/hidden/)
     const existingNodeIds = await page.evaluate(() => window.cy?.nodes().map((node) => node.id()) ?? [])
 
     // 真实交互里用户会先单击 AI 再立刻按 Tab。单击专属副作用仍需等待
@@ -611,8 +609,6 @@ test.describe('知识图谱编辑器 - E2E', () => {
         && Math.hypot(childPos.x - parentPos.x, childPos.y - parentPos.y) > 100
     }, { aiId, existingNodeIds })).toBe(true)
     await expect(page.locator('#view-mode-select')).toHaveValue('focus')
-    await expect(page.locator('#val-focus-node')).toHaveText('技术')
-    await expect(page.locator('#val-focus-depth')).toHaveText('1')
   })
 
   test('未命名子主题不应连续累积，取消后应完整移除', async ({ page }) => {

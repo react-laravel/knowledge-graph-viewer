@@ -104,20 +104,22 @@
         </div>
 
         <div id="panel-view" class="tab-panel active" role="tabpanel">
-          <h3 class="sidebar-panel-heading">高级视图设置</h3>
-          <div class="layout-field focus-depth-wrap" id="focus-depth-wrap" style="margin-top: 8px">
-            <label id="focus-depth-label">展开深度 <span id="val-focus-depth">1</span> 跳</label>
-            <input type="range" id="focus-depth" min="1" max="5" step="1" value="1" />
-          </div>
-          <div id="focus-center-wrap" class="focus-center-wrap">
-            <div class="focus-center-row">
-              <div class="focus-center-info">
-                <span id="focus-center-label" class="focus-center-label">当前中心</span>
-                <strong id="val-focus-node" class="focus-center-name" title="使用“设为中心”可主动切换中心">—</strong>
-              </div>
-              <div class="focus-center-actions">
-                <button type="button" class="btn btn-sm" id="btn-set-focus">设为中心</button>
-                <button type="button" class="btn btn-sm focus-reset-btn" id="btn-reset-focus">恢复默认</button>
+          <div id="advanced-view-section">
+            <h3 class="sidebar-panel-heading">高级视图设置</h3>
+            <div class="layout-field focus-depth-wrap" id="focus-depth-wrap" style="margin-top: 8px">
+              <label id="focus-depth-label">展开深度 <span id="val-focus-depth">1</span> 跳</label>
+              <input type="range" id="focus-depth" min="1" max="5" step="1" value="1" />
+            </div>
+            <div id="focus-center-wrap" class="focus-center-wrap">
+              <div class="focus-center-row">
+                <div class="focus-center-info">
+                  <span id="focus-center-label" class="focus-center-label">当前中心</span>
+                  <strong id="val-focus-node" class="focus-center-name" title="使用“设为中心”可主动切换中心">—</strong>
+                </div>
+                <div class="focus-center-actions">
+                  <button type="button" class="btn btn-sm" id="btn-set-focus">设为中心</button>
+                  <button type="button" class="btn btn-sm focus-reset-btn" id="btn-reset-focus">恢复默认</button>
+                </div>
               </div>
             </div>
           </div>
