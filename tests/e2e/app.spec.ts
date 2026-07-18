@@ -182,21 +182,28 @@ test.describe('知识图谱编辑器 - E2E', () => {
     expect(minimumNodeDistance).toBeGreaterThan(80)
   })
 
-  test('点击画布上的节点应该能选中', async ({ page }) => {
+  test('点击当前选中节点应该进入编辑并能改名', async ({ page }) => {
     await page.waitForTimeout(1500)
-    await page.click('.tab[data-tab="tree"]')
-
-    const nodeId = await page.evaluate(() => {
-      const label = document.querySelector('#tree-view [data-select]')
-      return label?.dataset.select || ''
-    })
+    const nodeId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
     if (!nodeId) return
 
-    await page.evaluate((id) => window.kgStore.selectAndFocus(id), nodeId)
-    await page.waitForTimeout(300)
-
-    const selectedId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
-    expect(selectedId).toBe(nodeId)
+    // 画布上已经呈绿色选中的焦点节点，一次点击就应进入编辑。
+    const clickPoint = await page.evaluate((id) => {
+      const node = window.cy?.getElementById(id)
+      const pane = document.getElementById('cy')?.getBoundingClientRect()
+      const pos = node?.renderedPosition()
+      return pane && pos ? { x: pane.left + pos.x, y: pane.top + pos.y } : null
+    }, nodeId)
+    expect(clickPoint).not.toBeNull()
+    await page.mouse.click(clickPoint.x, clickPoint.y)
+    const editor = page.locator('.node-editor.editing textarea')
+    await expect(editor).toBeVisible()
+    await expect(editor).toBeFocused()
+    await editor.fill('点击改名')
+    await page.locator('#graph-select').click()
+    await expect
+      .poll(() => page.evaluate((id) => window.cy?.getElementById(id).data('label') || '', nodeId))
+      .toBe('点击改名')
   })
 
   test('未归入家族方框的节点（如刘姥姥）应该能点击选中', async ({ page }) => {

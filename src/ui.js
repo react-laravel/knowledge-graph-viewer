@@ -619,6 +619,7 @@ export class SidebarPanel {
     const st = this.viewManager?.getState()
     if (!st?.focusNodeId || st.viewMode === 'full') return
     this.currentSelection = { type: 'node', id: st.focusNodeId }
+    this.editor.selectNode(st.focusNodeId)
     this.detailPanel?.update(this.currentSelection, this.store)
     this._updateTreeSelection()
   }

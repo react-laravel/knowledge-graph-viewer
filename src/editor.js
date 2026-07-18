@@ -210,13 +210,10 @@ export class InlineEditor {
       }
     })
 
-    // Cytoscape 双击：累加展开（单击聚焦由视图管理器处理）
+    // Cytoscape 双击：累加展开后进入名称编辑
     this.graph.cy.on('dbltap', 'node', (evt) => {
       const id = evt.target.id()
-      if (this.onNodeExpand) {
-        this.onNodeExpand(id)
-        return
-      }
+      this.onNodeExpand?.(id)
       this.startEdit(id)
     })
 
@@ -616,6 +613,8 @@ export class InlineEditor {
       return
     }
 
+    const wasSelected = this.selectedNodeId === nodeId
+
     if (this.editingNodeId && this.editingNodeId !== nodeId) {
       if (!this.commitEdit()) {
         this.nodeInput.value = this.editStartLabel
@@ -629,6 +628,11 @@ export class InlineEditor {
     this.selectedNodeId = nodeId
     this.graph.setSelected(nodeId)
     this.hideOverlay()
+    if (wasSelected) {
+      requestAnimationFrame(() => {
+        if (this.selectedNodeId === nodeId && !this.editingNodeId) this.startEdit(nodeId)
+      })
+    }
   }
 
   onEdgeSelect(edgeId) {
