@@ -168,7 +168,7 @@ describe('ViewManager 视图模式', () => {
     expect(manager.getState().focusNodeId).toBe('b')
   })
 
-  it('双击展开节点时不应从中心展开切换到渐进展开', () => {
+  it('累加展开节点时不应从中心展开切换到渐进展开', () => {
     const manager = new ViewManager(null, null)
     manager.state = createDefaultViewState({ viewMode: 'focus', focusNodeId: 'a' })
     manager.applyView = () => {}

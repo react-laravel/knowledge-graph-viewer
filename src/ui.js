@@ -16,6 +16,7 @@ export class SidebarPanel {
     this._treeQuery = ''
     this._treeAllExpanded = true
     this._treeFirstRender = true
+    this._treeClickTimer = null
 
     this._initTabs()
     this._initSearch()
@@ -577,38 +578,44 @@ export class SidebarPanel {
     }
 
     this.treeView.addEventListener('click', (e) => {
+      // 操作按钮必须优先于整行选择，否则点击编辑/删除只会选中节点。
+      const editBtn = e.target.closest('[data-edit]')
+      if (editBtn) {
+        e.preventDefault()
+        if (window.kgStore) window.kgStore.editNode(editBtn.dataset.edit)
+        return
+      }
+
+      const delBtn = e.target.closest('[data-delete]')
+      if (delBtn) {
+        e.preventDefault()
+        if (window.kgStore) window.kgStore.deleteNode(delBtn.dataset.delete)
+        return
+      }
+
       // 选择节点：点击 data-select span 或 tree-node div 本身
       const label = e.target.closest('[data-select]')
       const treeNode = !label ? e.target.closest('.tree-node') : null
       if (label || treeNode) {
         const nodeId = (label || treeNode).dataset.select || treeNode.dataset.id
-        if (window.kgStore) window.kgStore.selectAndFocus(nodeId)
-        return
-      }
-
-      // 编辑按钮
-      const editBtn = e.target.closest('[data-edit]')
-      if (editBtn) {
-        const nodeId = editBtn.dataset.edit
-        if (window.kgStore) window.kgStore.editNode(nodeId)
-        return
-      }
-
-      // 删除按钮
-      const delBtn = e.target.closest('[data-delete]')
-      if (delBtn) {
-        const nodeId = delBtn.dataset.delete
-        if (window.kgStore) window.kgStore.deleteNode(nodeId)
+        clearTimeout(this._treeClickTimer)
+        this._treeClickTimer = setTimeout(() => {
+          this._treeClickTimer = null
+          if (window.kgStore) window.kgStore.selectAndFocus(nodeId)
+        }, 220)
         return
       }
     })
 
     this.treeView.addEventListener('dblclick', (e) => {
+      if (e.target.closest('[data-toggle], .tree-actions')) return
       const label = e.target.closest('[data-select]')
-      if (label) {
-        const nodeId = label.dataset.select
-        if (window.kgStore) window.kgStore.editNode(nodeId)
-      }
+      const treeNode = !label ? e.target.closest('.tree-node') : null
+      if (!label && !treeNode) return
+      clearTimeout(this._treeClickTimer)
+      this._treeClickTimer = null
+      const nodeId = (label || treeNode).dataset.select || treeNode.dataset.id
+      if (window.kgStore) window.kgStore.editNode(nodeId)
     })
   }
 
@@ -626,6 +633,9 @@ export class SidebarPanel {
 
   onSelect(selection) {
     if (!selection) {
+      clearTimeout(this._treeClickTimer)
+      this._treeClickTimer = null
+      this.graph.cancelPendingSelection?.()
       this.currentSelection = null
       this.editor.deselect()
       this.detailPanel?.renderEmpty()
@@ -633,23 +643,71 @@ export class SidebarPanel {
       this._updateTreeSelection()
       return
     }
-    this.currentSelection = selection
-
     if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) {
       this.viewManager.expandAggregate(selection.id)
       return
     }
 
     if (selection.type === 'node') {
-      this.editor.onNodeSelect(selection.id, { shiftLink: selection.shiftKey })
-      if (!selection.shiftKey && this.viewManager) {
-        this.viewManager.setFocusNode(selection.id, { replace: this.viewManager.getState().viewMode !== 'expand' })
+      const selected = this.editor.onNodeSelect(selection.id, { shiftLink: selection.shiftKey })
+      if (selected) {
+        this.currentSelection = selection
+        this._applyNodeClickView(selection.id)
+      } else {
+        this.currentSelection = this._getEditorSelection()
       }
     } else {
       this.editor.onEdgeSelect(selection.id)
+      this.currentSelection = selection
     }
 
-    this.detailPanel?.update(selection, this.store)
+    this._syncSelectionUi()
+  }
+
+  /** 双击只执行显式编辑，不再附带聚焦或累加展开。 */
+  onActivate(selection) {
+    if (!selection) return
+    if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) {
+      this.viewManager.expandAggregate(selection.id)
+      return
+    }
+
+    if (selection.type === 'node') {
+      const selected = this.editor.onNodeSelect(selection.id, { shiftLink: selection.shiftKey })
+      if (selected) {
+        this.currentSelection = selection
+        this.editor.startEdit(selection.id)
+      } else {
+        this.currentSelection = this._getEditorSelection()
+      }
+    } else {
+      this.editor.onEdgeSelect(selection.id)
+      this.editor.startEdgeEdit(selection.id)
+      this.currentSelection = selection
+    }
+
+    this._syncSelectionUi()
+  }
+
+  _applyNodeClickView(nodeId) {
+    if (!this.viewManager) return
+    const mode = this.viewManager.getState().viewMode
+    if (mode === 'focus') {
+      this.viewManager.setFocusNode(nodeId, { replace: true })
+    } else if (mode === 'expand') {
+      this.viewManager.expandFromNode(nodeId)
+    }
+  }
+
+  _getEditorSelection() {
+    if (this.editor.selectedEdgeId) return { type: 'edge', id: this.editor.selectedEdgeId }
+    if (this.editor.selectedNodeId) return { type: 'node', id: this.editor.selectedNodeId }
+    return null
+  }
+
+  _syncSelectionUi() {
+    if (this.currentSelection) this.detailPanel?.update(this.currentSelection, this.store)
+    else this.detailPanel?.renderEmpty()
     this._updateButtonStates()
     this._updateTreeSelection()
   }

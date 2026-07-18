@@ -94,6 +94,28 @@ test.describe('知识图谱编辑器 - E2E', () => {
     }
   })
 
+  test('节点树的编辑和删除按钮应该执行对应操作', async ({ page }) => {
+    await page.click('.tab[data-tab="tree"]')
+    const row = page.locator('#tree-view .tree-node').first()
+    const nodeId = await row.getAttribute('data-id')
+    if (!nodeId) return
+
+    await row.hover()
+    await row.locator('[data-edit]').click()
+    const editor = page.locator('.node-editor.editing textarea')
+    await expect(editor).toBeVisible()
+    await expect(editor).toBeFocused()
+    await editor.press('Escape')
+
+    page.once('dialog', (dialog) => dialog.accept())
+    await row.hover()
+    await row.locator('[data-delete]').click()
+    await expect
+      .poll(() => page.evaluate((id) => window.cy?.getElementById(id).nonempty() ?? false, nodeId))
+      .toBe(false)
+    await expect(page.locator('#detail-content')).toContainText('选中节点或连线查看详情')
+  })
+
   test('布局设置滑块应该能调整', async ({ page }) => {
     const repulsionSlider = page.locator('#layout-repulsion')
     await expect(repulsionSlider).toBeVisible()
@@ -182,7 +204,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
     expect(minimumNodeDistance).toBeGreaterThan(80)
   })
 
-  test('单击画布节点应该直接进入编辑并能改名', async ({ page }) => {
+  test('单击画布节点只选择，双击才进入编辑并能改名', async ({ page }) => {
     await page.waitForTimeout(1500)
     page.once('dialog', (dialog) => dialog.accept())
     await page.locator('input[name="view-mode"][value="full"]').check()
@@ -196,7 +218,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
     })
     if (!nodeId) return
 
-    // 无论节点之前是否选中，一次点击就应进入编辑。
+    // 单击只选择，不进入编辑，也不能改变用户手动选择的“显示全部”模式。
     const clickPoint = await page.evaluate((id) => {
       const node = window.cy?.getElementById(id)
       const pane = document.getElementById('cy')?.getBoundingClientRect()
@@ -206,13 +228,21 @@ test.describe('知识图谱编辑器 - E2E', () => {
     expect(clickPoint).not.toBeNull()
     await page.mouse.click(clickPoint.x, clickPoint.y)
     const editor = page.locator('.node-editor.editing textarea')
+    await expect
+      .poll(() => page.evaluate((id) => window.cy?.$('node.selected').id() === id, nodeId))
+      .toBe(true)
+    await expect(editor).toBeHidden()
+    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+
+    // 双击是显式编辑动作，且不会附带聚焦或切换视图模式。
+    await page.mouse.dblclick(clickPoint.x, clickPoint.y)
     await expect(editor).toBeVisible()
     await expect(editor).toBeFocused()
-    await editor.fill('点击改名')
+    await editor.fill('双击改名')
     await page.locator('#graph-select').click()
     await expect
       .poll(() => page.evaluate((id) => window.cy?.getElementById(id).data('label') || '', nodeId))
-      .toBe('点击改名')
+      .toBe('双击改名')
     await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
   })
 

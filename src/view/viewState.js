@@ -3,8 +3,8 @@ import { defaultActiveCategories } from './relationCategories.js'
 const STORAGE_KEY = 'kg-viewer-view'
 
 export const VIEW_MODES = {
-  focus: { id: 'focus', label: '中心展开', desc: '以焦点节点为中心，只显示 N 跳关系' },
-  expand: { id: 'expand', label: '渐进展开', desc: '单击替换焦点，双击累加展开' },
+  focus: { id: 'focus', label: '中心展开', desc: '单击节点切换中心，只显示 N 跳关系' },
+  expand: { id: 'expand', label: '渐进展开', desc: '单击节点累加展开，不会自动切换模式' },
   full: { id: 'full', label: '显示全部', desc: '显示所有节点（可能很乱）' },
 }
 

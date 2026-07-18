@@ -102,10 +102,6 @@ export class ViewManager {
       this.graph.fitToVisibleNodes(visibleNodeIds)
     }
 
-    if (this.state.focusNodeId && this.state.viewMode !== 'full') {
-      this.graph.setSelected(this.state.focusNodeId)
-    }
-
     this._notify()
   }
 

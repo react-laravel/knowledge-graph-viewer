@@ -28,6 +28,7 @@ export class App {
     const cyContainer = document.getElementById('cy')
     this.graph = new GraphManager(cyContainer, {
       onSelect: (selection) => this.ui?.onSelect(selection),
+      onActivate: (selection) => this.ui?.onActivate(selection),
       themeMode: initialTheme,
     })
     window.cy = this.graph.cy
@@ -41,13 +42,6 @@ export class App {
     this.detailPanel.renderEmpty()
 
     this.editor = new InlineEditor(this.store, this.graph)
-    this.editor.onNodeExpand = (nodeId) => {
-      if (this.viewManager.isAggregateNode(nodeId)) {
-        this.viewManager.expandAggregate(nodeId)
-      } else {
-        this.viewManager.expandFromNode(nodeId)
-      }
-    }
 
     this.ui = new SidebarPanel(this.store, this.graph, this.editor, this.viewManager, this.detailPanel)
 
@@ -213,15 +207,11 @@ export class App {
         this._updateGraphSelector()
       },
       selectAndFocus: (nodeId) => {
-        this.viewManager.setFocusNode(nodeId, { replace: true, layout: false })
-        this.editor.selectNode(nodeId)
-        this.graph.setSelected(nodeId)
-        this.graph.focusNode(nodeId)
         this.ui.onSelect({ type: 'node', id: nodeId })
+        this.graph.focusNode(nodeId)
       },
       editNode: (nodeId) => {
-        this.editor.selectNode(nodeId)
-        this.editor.startEdit(nodeId)
+        this.ui.onActivate({ type: 'node', id: nodeId })
       },
       deleteNode: (nodeId) => {
         this.editor.deleteNodeById(nodeId)

@@ -1,4 +1,4 @@
-/** XMind 风格内联编辑：点击节点直接输入，Tab 子节点，Enter 同级节点 */
+/** 图谱内联编辑：单击选择，双击或 Enter/F2 编辑，Tab 子节点，编辑中 Enter 创建同级节点 */
 
 export class InlineEditor {
   constructor(store, graph) {
@@ -180,7 +180,7 @@ export class InlineEditor {
         return
       }
 
-      if (e.key === 'Enter' && !this._isInputFocused()) {
+      if ((e.key === 'Enter' || e.key === 'F2') && !this._isInputFocused()) {
         e.preventDefault()
         if (this.selectedEdgeId) this.startEdgeEdit()
         else if (this.selectedNodeId) this.startEdit()
@@ -193,33 +193,6 @@ export class InlineEditor {
         return
       }
 
-      if (
-        this.selectedNodeId &&
-        !this.editingNodeId &&
-        !this._isInputFocused() &&
-        e.key.length === 1 &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
-        e.preventDefault()
-        this.startEdit()
-        this.nodeInput.value = e.key
-        this._resetTextHistory(e.key)
-        this.nodeInput.setSelectionRange(1, 1)
-      }
-    })
-
-    // Cytoscape 双击：累加展开后进入名称编辑
-    this.graph.cy.on('dbltap', 'node', (evt) => {
-      const id = evt.target.id()
-      this.onNodeExpand?.(id)
-      this.startEdit(id)
-    })
-
-    this.graph.cy.on('dbltap', 'edge', (evt) => {
-      this.onEdgeSelect(evt.target.id())
-      this.startEdgeEdit(evt.target.id())
     })
 
     // 平移/缩放时更新编辑器位置
@@ -541,6 +514,7 @@ export class InlineEditor {
       this.store.deleteEdge(this.selectedEdgeId)
       this.clearEdgeSelection()
       this.graph.setSelected(null)
+      this.onDeselect?.()
       return
     }
     if (!this.selectedNodeId || this._isInputFocused()) return
@@ -551,6 +525,7 @@ export class InlineEditor {
     this.selectedNodeId = null
     this.hideOverlay()
     this.graph.setSelected(null)
+    this.onDeselect?.()
   }
 
   deleteNodeById(nodeId) {
@@ -562,6 +537,7 @@ export class InlineEditor {
       this.selectedNodeId = null
       this.hideOverlay()
       this.graph.setSelected(null)
+      this.onDeselect?.()
     }
   }
 
@@ -596,10 +572,10 @@ export class InlineEditor {
       if (this.linkSourceId === nodeId) {
         this.cancelLinkMode()
         InlineEditor.showToast('已取消关联')
-        return
+        return false
       }
       this.linkNodes(this.linkSourceId, nodeId)
-      return
+      return false
     }
 
     // 选中家族节点后 Shift+点击目标节点 → 将目标归入该家族
@@ -607,10 +583,10 @@ export class InlineEditor {
       const selectedNode = this.store.getNode(this.selectedNodeId)
       if (selectedNode && selectedNode.group === 'org') {
         this._moveIntoGroup(nodeId, this.selectedNodeId)
-        return
+        return false
       }
       this.linkNodes(this.selectedNodeId, nodeId)
-      return
+      return false
     }
 
     if (this.editingNodeId && this.editingNodeId !== nodeId) {
@@ -626,9 +602,7 @@ export class InlineEditor {
     this.selectedNodeId = nodeId
     this.graph.setSelected(nodeId)
     this.hideOverlay()
-    requestAnimationFrame(() => {
-      if (this.selectedNodeId === nodeId && !this.editingNodeId) this.startEdit(nodeId)
-    })
+    return true
   }
 
   onEdgeSelect(edgeId) {

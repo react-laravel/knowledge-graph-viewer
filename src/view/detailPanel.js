@@ -9,7 +9,7 @@ export class DetailPanel {
     this.el.innerHTML = `
       <div class="detail-empty">
         <p>选中节点或连线查看详情</p>
-        <p class="hint">单击节点聚焦 · 双击累加展开 · Hover 高亮相邻</p>
+        <p class="hint">单击选择 · 双击编辑 · Hover 高亮相邻</p>
       </div>
     `
   }

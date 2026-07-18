@@ -19,12 +19,16 @@ const DEFAULT_LAYOUT_OPTIONS = {
   numIter: 2500,
 }
 
+const TAP_DELAY_MS = 220
+
 export class GraphManager {
   constructor(container, options = {}) {
     this.container = container
     this.spacePressed = false
     this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS }
     this._onSelect = options.onSelect
+    this._onActivate = options.onActivate
+    this._pendingTapTimer = null
     this._showEdgeLabels = false
     this._hoverHighlight = true
     this._themeMode = options.themeMode === 'dark' ? 'dark' : 'light'
@@ -374,43 +378,74 @@ export class GraphManager {
 
   _initEvents() {
     this.cy.on('tap', (evt) => {
-      const pos = evt.renderedPosition
-
-      // compound 方框范围内的「外部」节点：Cytoscape 命中会落到 cy，需按坐标补选
-      if (evt.target === this.cy) {
-        const hit = this._topLeafNodeAt(pos)
-        if (hit) {
-          this._onSelect?.({
-            type: 'node',
-            id: hit.id(),
-            shiftKey: !!evt.originalEvent?.shiftKey,
-          })
-          return
-        }
-        this._onSelect?.(null)
+      const selection = this._selectionFromEvent(evt)
+      if (!selection) {
+        this._cancelPendingTap()
+        if (evt.target === this.cy) this._onSelect?.(null)
         return
       }
 
-      if (!evt.target.isNode() && !evt.target.isEdge()) return
-
-      let el = evt.target
-      if (el.isNode() && el.isParent()) {
-        const hit = this._topLeafNodeAt(pos)
-        if (hit) el = hit
-      }
-
-      this._onSelect?.({
-        type: el.isNode() ? 'node' : 'edge',
-        id: el.id(),
-        shiftKey: !!evt.originalEvent?.shiftKey,
-      })
+      // Cytoscape 会在 dbltap 前先触发两次 tap。稍后派发单击，避免双击编辑时
+      // 又触发聚焦或渐进展开。
+      this._cancelPendingTap()
+      this._pendingTapTimer = setTimeout(() => {
+        this._pendingTapTimer = null
+        this._onSelect?.(selection)
+      }, TAP_DELAY_MS)
     })
+
+    this.cy.on('dbltap', (evt) => {
+      this._cancelPendingTap()
+      const selection = this._selectionFromEvent(evt)
+      if (selection) this._onActivate?.(selection)
+    })
+  }
+
+  _cancelPendingTap() {
+    if (this._pendingTapTimer) {
+      clearTimeout(this._pendingTapTimer)
+      this._pendingTapTimer = null
+    }
+  }
+
+  cancelPendingSelection() {
+    this._cancelPendingTap()
+  }
+
+  _selectionFromEvent(evt) {
+    const pos = evt.renderedPosition
+
+    // compound 方框范围内的「外部」节点：Cytoscape 命中会落到 cy，需按坐标补选
+    if (evt.target === this.cy) {
+      const hit = this._topLeafNodeAt(pos)
+      if (!hit) return null
+      return {
+        type: 'node',
+        id: hit.id(),
+        shiftKey: !!evt.originalEvent?.shiftKey,
+      }
+    }
+
+    if (!evt.target.isNode() && !evt.target.isEdge()) return null
+
+    let el = evt.target
+    if (el.isNode() && el.isParent()) {
+      const hit = this._topLeafNodeAt(pos)
+      if (hit) el = hit
+    }
+
+    return {
+      type: el.isNode() ? 'node' : 'edge',
+      id: el.id(),
+      shiftKey: !!evt.originalEvent?.shiftKey,
+    }
   }
 
   // === 同步数据 ===
 
   sync(elements, { layout = false } = {}) {
     const positions = {}
+    const selectedIds = this.cy.elements('.selected').map((el) => el.id())
     this.cy.nodes().forEach((n) => {
       positions[n.id()] = { ...n.position() }
     })
@@ -422,6 +457,7 @@ export class GraphManager {
       const saved = positions[n.id()]
       if (saved) n.position(saved)
     })
+    selectedIds.forEach((id) => this.cy.getElementById(id).addClass('selected'))
 
     // 新增元素按当前模式设置拖拽能力
     this._applyNodeDragMode()
