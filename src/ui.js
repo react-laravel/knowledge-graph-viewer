@@ -16,6 +16,8 @@ export class SidebarPanel {
     this._treeQuery = ''
     this._treeAllExpanded = true
     this._treeFirstRender = true
+    this._treeGraphId = null
+    this._knownHierarchyEdgeIds = new Set()
     this._treeClickTimer = null
     this.moveSourceId = null
 
@@ -90,7 +92,9 @@ export class SidebarPanel {
         const data = await importJson(file)
         this.store.loadFromData(data)
         this.editor.deselect()
-        this.graph.runLayout()
+        this.viewManager.resetForGraph(this.store.getCurrentGraphId())
+        this.viewManager.applyView({ layout: true })
+        this.syncInitialSelection()
         SidebarPanel.showToast('导入成功')
       } catch (err) {
         SidebarPanel.showToast(err.message, true)
@@ -122,6 +126,9 @@ export class SidebarPanel {
   _initNodeActions() {
     this.nodeActionBar = document.getElementById('node-action-bar')
     this.nodeActionLabel = document.getElementById('node-action-label')
+    this.addChildNodeButton = document.getElementById('btn-add-child-node')
+    this.addSiblingNodeButton = document.getElementById('btn-add-sibling-node')
+    this.editSelectedNodeButton = document.getElementById('btn-edit-selected-node')
     this.moveNodeButton = document.getElementById('btn-move-node')
     this.cancelMoveButton = document.getElementById('btn-cancel-move')
     if (!this.nodeActionBar || !this.moveNodeButton || !this.cancelMoveButton) return
@@ -129,6 +136,27 @@ export class SidebarPanel {
     this.moveNodeButton.addEventListener('click', (event) => {
       event.stopPropagation()
       this.startMoveMode()
+    })
+    this.addChildNodeButton?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const parentId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      const childId = this.editor.createChild(parentId)
+      if (!childId) return
+      this.currentSelection = { type: 'node', id: childId }
+      this._syncSelectionUi()
+    })
+    this.addSiblingNodeButton?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      const siblingId = this.editor.createSibling(nodeId)
+      if (!siblingId) return
+      this.currentSelection = { type: 'node', id: siblingId }
+      this._syncSelectionUi()
+    })
+    this.editSelectedNodeButton?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      if (nodeId) this.editor.startEdit(nodeId)
     })
     this.cancelMoveButton.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -145,6 +173,10 @@ export class SidebarPanel {
   startMoveMode() {
     const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
     const node = nodeId ? this.store.getNode(nodeId) : null
+    if (node && this.store.isRootNode?.(nodeId)) {
+      SidebarPanel.showToast('中心主题固定不动', true)
+      return
+    }
     if (!node || node.group === 'org') {
       SidebarPanel.showToast('请先选择一个普通节点', true)
       return
@@ -208,9 +240,15 @@ export class SidebarPanel {
     if (!show) return
 
     const moving = !!this.moveSourceId
+    const isRoot = this.store.isRootNode?.(nodeId)
     this.nodeActionBar.classList.toggle('moving', moving)
-    this.nodeActionLabel.textContent = moving ? `请选择「${node.label}」的新父节点` : `已选：${node.label}`
-    this.moveNodeButton.hidden = moving
+    this.nodeActionLabel.textContent = moving
+      ? `请选择「${node.label}」的新父节点`
+      : isRoot ? `中心主题：${node.label}` : `已选：${node.label}`
+    this.addChildNodeButton.hidden = moving
+    this.addSiblingNodeButton.hidden = moving || isRoot
+    this.editSelectedNodeButton.hidden = moving
+    this.moveNodeButton.hidden = moving || isRoot
     this.cancelMoveButton.hidden = !moving
   }
 
@@ -249,6 +287,21 @@ export class SidebarPanel {
         this.graph.setSelected(id)
         this.graph.focusNode(id)
       }
+    })
+
+    document.getElementById('btn-set-focus')?.addEventListener('click', () => {
+      if (this.store.getMindMapRootId?.()) {
+        SidebarPanel.showToast('思维导图的中心主题固定不变')
+        return
+      }
+      const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+      if (!nodeId || this.viewManager.isAggregateNode(nodeId)) {
+        SidebarPanel.showToast('请先选择一个节点', true)
+        return
+      }
+      this.viewManager.setFocusNode(nodeId, { replace: true, layout: false })
+      this.graph.setSelected(nodeId)
+      this.graph.focusNode(nodeId)
     })
 
     this.viewManager.subscribe(() => {
@@ -383,8 +436,11 @@ export class SidebarPanel {
   _syncViewControls() {
     const st = this.viewManager.getState()
     const showRedChamberFeatures = this._isRedChamberExample()
+    const isMindMap = Boolean(this.store.getMindMapRootId?.())
     document.getElementById('relation-filter-section')?.classList.toggle('hidden', !showRedChamberFeatures)
     document.getElementById('timeline-section')?.classList.toggle('hidden', !showRedChamberFeatures)
+    document.getElementById('network-layout-section')?.classList.toggle('hidden', isMindMap)
+    document.getElementById('mindmap-layout-section')?.classList.toggle('hidden', !isMindMap)
     document.querySelectorAll('input[name="view-mode"]').forEach((r) => {
       r.checked = r.value === st.viewMode
     })
@@ -447,9 +503,24 @@ export class SidebarPanel {
   _syncFocusCenter() {
     const wrap = document.getElementById('focus-center-wrap')
     const label = document.getElementById('val-focus-node')
+    const title = document.getElementById('focus-center-label')
     const btn = document.getElementById('btn-reset-focus')
+    const setBtn = document.getElementById('btn-set-focus')
     const st = this.viewManager.getState()
     if (!label) return
+
+    const mindMapRootId = this.store.getMindMapRootId?.()
+    if (mindMapRootId) {
+      const root = this.store.getNode(mindMapRootId)
+      if (title) title.textContent = '中心主题'
+      label.textContent = root?.label ?? '—'
+      wrap?.classList.remove('muted')
+      btn?.setAttribute('disabled', 'disabled')
+      setBtn?.setAttribute('disabled', 'disabled')
+      return
+    }
+
+    if (title) title.textContent = '当前中心'
 
     const inFocusMode = st.viewMode !== 'full'
     wrap?.classList.toggle('muted', !inFocusMode)
@@ -457,12 +528,20 @@ export class SidebarPanel {
     if (!inFocusMode) {
       label.textContent = '无（显示全部）'
       btn?.setAttribute('disabled', 'disabled')
+      setBtn?.setAttribute('disabled', 'disabled')
       return
     }
 
     btn?.removeAttribute('disabled')
     const node = st.focusNodeId ? this.store.getNode(st.focusNodeId) : null
     label.textContent = node?.label ?? st.focusNodeId ?? '—'
+
+    const selectedNodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+    if (!selectedNodeId || selectedNodeId === st.focusNodeId || this.viewManager.isAggregateNode(selectedNodeId)) {
+      setBtn?.setAttribute('disabled', 'disabled')
+    } else {
+      setBtn?.removeAttribute('disabled')
+    }
 
     const defaultId = this.viewManager.resolveDefaultFocusNodeId()
     if (defaultId && st.focusNodeId === defaultId) {
@@ -496,6 +575,10 @@ export class SidebarPanel {
         if (input) opts[cfg.key] = cfg.parse(input.value)
       })
       this.graph.setLayoutOptions(opts)
+      this.graph.runLayout()
+    })
+
+    document.getElementById('btn-mindmap-layout')?.addEventListener('click', () => {
       this.graph.runLayout()
     })
   }
@@ -537,10 +620,14 @@ export class SidebarPanel {
           const dataMap = this.store.exportData().dataMap
           const currentId = this.store.getCurrentGraphId()
           const nodes = dataMap[currentId]?.nodes ?? this.store.getAllNodes()
+          const mindMapRootId = this.store.getMindMapRootId?.()
+          const treeParentId = (node) => (
+            mindMapRootId ? (this.store.getHierarchyParentId(node.id) || '') : (node.parent || '')
+          )
           const childrenMap = {}
           nodes.forEach((n) => {
-            const parentId = n.parent || ''
-            if (parentId && nodes.some((c) => c.parent === parentId)) {
+            const parentId = treeParentId(n)
+            if (parentId) {
               if (!childrenMap[parentId]) childrenMap[parentId] = []
               childrenMap[parentId].push(n)
             }
@@ -551,7 +638,7 @@ export class SidebarPanel {
               childrenMap[nodeId].forEach((c) => expandAll(c.id))
             }
           }
-          nodes.filter((n) => !n.parent).forEach((n) => expandAll(n.id))
+          nodes.filter((n) => !treeParentId(n)).forEach((n) => expandAll(n.id))
         }
         this._renderTree()
       })
@@ -564,7 +651,37 @@ export class SidebarPanel {
     const allNodes = this.store.getAllNodes()
     const currentId = this.store.getCurrentGraphId()
     const dataMap = this.store.exportData().dataMap
-    let nodes = dataMap[currentId]?.nodes ?? allNodes
+    const currentData = dataMap[currentId] ?? { nodes: allNodes, edges: [] }
+    let nodes = currentData.nodes ?? allNodes
+    const mindMapRootId = this.store.getMindMapRootId?.()
+
+    if (this._treeGraphId !== currentId) {
+      this._treeGraphId = currentId
+      this.treeExpanded.clear()
+      this._knownHierarchyEdgeIds.clear()
+      this._treeFirstRender = true
+      this._treeAllExpanded = true
+      const toggleBtn = document.getElementById('btn-tree-toggle')
+      if (toggleBtn) toggleBtn.textContent = '⊟'
+    }
+
+    if (mindMapRootId) {
+      const hierarchyEdges = (currentData.edges ?? []).filter(
+        (edge) => edge.hierarchy === true || edge.hierarchy === 'yes' || edge.type === '子节点'
+      )
+      const nextEdgeIds = new Set()
+      hierarchyEdges.forEach((edge) => {
+        const edgeKey = edge.id || `${edge.source}->${edge.target}`
+        nextEdgeIds.add(edgeKey)
+        // 新增主题时自动展开它的父主题；用户之后仍可手动收起。
+        if (!this._knownHierarchyEdgeIds.has(edgeKey)) this.treeExpanded.add(edge.source)
+      })
+      this._knownHierarchyEdgeIds = nextEdgeIds
+    }
+
+    const treeParentId = (node) => (
+      mindMapRootId ? (this.store.getHierarchyParentId(node.id) || '') : (node.parent || '')
+    )
 
     // 搜索过滤：匹配节点 + 补全祖先路径，保证树结构完整
     if (this._treeQuery) {
@@ -578,10 +695,10 @@ export class SidebarPanel {
           if (n.label.toLowerCase().includes(q) || n.id.toLowerCase().includes(q)) {
             matched.add(n.id)
             // 向上补全祖先
-            let pid = n.parent || ''
+            let pid = treeParentId(n)
             while (pid && byId[pid]) {
               matched.add(pid)
-              pid = byId[pid].parent || ''
+              pid = treeParentId(byId[pid])
             }
           }
         })
@@ -593,7 +710,7 @@ export class SidebarPanel {
     const childrenMap = {}
     const roots = []
     nodes.forEach((n) => {
-      const parentId = n.parent || ''
+      const parentId = treeParentId(n)
       if (parentId && childrenMap[parentId]) {
         childrenMap[parentId].push(n)
       } else if (parentId) {
@@ -603,10 +720,12 @@ export class SidebarPanel {
       }
     })
 
-    // 按名称排序
-    const sortFn = (a, b) => a.label.localeCompare(b.label, 'zh')
-    roots.sort(sortFn)
-    Object.values(childrenMap).forEach((arr) => arr.sort(sortFn))
+    // 关系图按名称查找更方便；思维导图保留创建顺序，避免大纲与画布分支顺序跳动。
+    if (!mindMapRootId) {
+      const sortFn = (a, b) => a.label.localeCompare(b.label, 'zh')
+      roots.sort(sortFn)
+      Object.values(childrenMap).forEach((arr) => arr.sort(sortFn))
+    }
 
     // 首次渲染时自动展开所有有子节点的项
     if (this._treeFirstRender) {
@@ -630,6 +749,7 @@ export class SidebarPanel {
     const isExpanded = this.treeExpanded.has(node.id)
     const isSelected = this.currentSelection?.id === node.id && this.currentSelection?.type === 'node'
     const isOrg = node.group === 'org'
+    const isRoot = this.store.isRootNode?.(node.id)
 
     const toggleClass = hasChildren ? (isExpanded ? 'expanded' : '') : 'empty'
     const toggleIcon = '▸'
@@ -647,7 +767,7 @@ export class SidebarPanel {
         <span class="${labelClass}" data-select="${node.id}">${SidebarPanel.escapeHtml(node.label)}</span>
         <span class="tree-actions">
           <button class="tree-btn" data-edit="${node.id}" title="编辑">✎</button>
-          <button class="tree-btn danger" data-delete="${node.id}" title="删除">×</button>
+          ${isRoot ? '' : `<button class="tree-btn danger" data-delete="${node.id}" title="删除">×</button>`}
         </span>
       </div>
       ${childHtml}
@@ -723,13 +843,24 @@ export class SidebarPanel {
   /** 进入页面时与图上默认焦点保持一致 */
   syncInitialSelection() {
     this.cancelMoveMode()
+    this.currentSelection = null
+    this.editor.deselect()
+    this.detailPanel?.renderEmpty()
     const st = this.viewManager?.getState()
-    if (!st?.focusNodeId || st.viewMode === 'full') return
-    this.currentSelection = { type: 'node', id: st.focusNodeId }
-    this.editor.selectNode(st.focusNodeId)
+    const rootId = this.store.getMindMapRootId?.()
+    const nodeId = rootId || (st?.viewMode !== 'full' ? st?.focusNodeId : null)
+    if (!nodeId) {
+      this._updateTreeSelection()
+      this._updateNodeActionBar()
+      this._syncFocusCenter()
+      return
+    }
+    this.currentSelection = { type: 'node', id: nodeId }
+    this.editor.selectNode(nodeId)
     this.detailPanel?.update(this.currentSelection, this.store)
     this._updateTreeSelection()
     this._updateNodeActionBar()
+    this._syncFocusCenter()
   }
 
   onSelect(selection) {
@@ -744,6 +875,7 @@ export class SidebarPanel {
       this._updateButtonStates()
       this._updateTreeSelection()
       this._updateNodeActionBar()
+      this._syncFocusCenter()
       return
     }
 
@@ -764,7 +896,10 @@ export class SidebarPanel {
       const selected = this.editor.onNodeSelect(selection.id, { shiftLink: selection.shiftKey })
       if (selected) {
         this.currentSelection = selection
-        this._applyNodeClickView(selection.id)
+        // “渐进展开”本身就是用户主动选择的交互模式；中心展开则必须再点“设为中心”。
+        if (this.viewManager?.getState().viewMode === 'expand') {
+          this.viewManager.expandFromNode(selection.id)
+        }
       } else {
         this.currentSelection = this._getEditorSelection()
       }
@@ -809,16 +944,6 @@ export class SidebarPanel {
     this._syncSelectionUi()
   }
 
-  _applyNodeClickView(nodeId) {
-    if (!this.viewManager) return
-    const mode = this.viewManager.getState().viewMode
-    if (mode === 'focus') {
-      this.viewManager.setFocusNode(nodeId, { replace: true })
-    } else if (mode === 'expand') {
-      this.viewManager.expandFromNode(nodeId)
-    }
-  }
-
   _getEditorSelection() {
     if (this.editor.selectedEdgeId) return { type: 'edge', id: this.editor.selectedEdgeId }
     if (this.editor.selectedNodeId) return { type: 'node', id: this.editor.selectedNodeId }
@@ -831,6 +956,7 @@ export class SidebarPanel {
     this._updateButtonStates()
     this._updateTreeSelection()
     this._updateNodeActionBar()
+    this._syncFocusCenter()
   }
 
   _updateTreeSelection() {

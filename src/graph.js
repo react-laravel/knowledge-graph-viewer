@@ -20,6 +20,9 @@ const DEFAULT_LAYOUT_OPTIONS = {
 }
 
 const TAP_DELAY_MS = 220
+const MIND_MAP_ROOT_GAP = 230
+const MIND_MAP_LEVEL_GAP = 190
+const MIND_MAP_ROW_GAP = 96
 
 export class GraphManager {
   constructor(container, options = {}) {
@@ -32,6 +35,7 @@ export class GraphManager {
     this._showEdgeLabels = false
     this._hoverHighlight = true
     this._themeMode = options.themeMode === 'dark' ? 'dark' : 'light'
+    this._mindMapStructureSignature = ''
 
     this.cy = cytoscape({
       container,
@@ -50,6 +54,14 @@ export class GraphManager {
     this._themeMode = themeMode === 'dark' ? 'dark' : 'light'
     this.cy.style(buildStyles(this._showEdgeLabels, this._themeMode))
     this._scheduleMinimapDraw()
+  }
+
+  isMindMap() {
+    return this.cy.nodes('[mindMap = "yes"]').length > 0 && this._getMindMapRoot().nonempty()
+  }
+
+  _getMindMapRoot() {
+    return this.cy.nodes('[isRoot = "yes"]').first()
   }
 
   // === 小地图 ===
@@ -370,6 +382,12 @@ export class GraphManager {
 
   _applyNodeDragMode() {
     this.cy.nodes().forEach((n) => {
+      // 中心主题是思维导图的结构锚点，只能通过重新布局定位，不能被用户拖走。
+      if (n.data('isRoot') === 'yes') {
+        try { n.lock() } catch {}
+        try { n.ungrabify() } catch {}
+        return
+      }
       // 父节点始终可拖拽（按住空格移动位置，不按空格时由 mousedown 拦截为平移画布）
       if (n.isParent()) return
       try { n[this.spacePressed ? 'unlock' : 'lock']() } catch {}
@@ -456,6 +474,10 @@ export class GraphManager {
     this.cy.elements().remove()
     this.cy.add(elements)
 
+    const nextMindMapSignature = this._computeMindMapStructureSignature()
+    const mindMapStructureChanged = nextMindMapSignature !== this._mindMapStructureSignature
+    this._mindMapStructureSignature = nextMindMapSignature
+
     this.cy.nodes().forEach((n) => {
       const saved = positions[n.id()]
       if (saved) n.position(saved)
@@ -467,12 +489,38 @@ export class GraphManager {
 
     if (layout) {
       this.runLayout()
+    } else if (mindMapStructureChanged && this.isMindMap()) {
+      // undo/redo、删除恢复和层级移动同样会经过 sync；结构变化必须自动重排，
+      // 否则新恢复的节点会停在 Cytoscape 默认原点并与中心主题重叠。
+      this._runMindMapLayout()
     }
+  }
+
+  _computeMindMapStructureSignature() {
+    const root = this._getMindMapRoot()
+    if (root.empty()) return ''
+
+    const nodes = this.cy.nodes('[mindMap = "yes"]').map((node) => [
+      node.id(),
+      node.data('branchSide') || '',
+      node.data('label') || '',
+    ])
+    const edges = this.cy.edges().filter((edge) => {
+      const hierarchy = edge.data('hierarchy')
+      return hierarchy === true || hierarchy === 'yes' || edge.data('type') === '子节点'
+    }).map((edge) => [edge.id(), edge.source().id(), edge.target().id()])
+
+    return JSON.stringify({ rootId: root.id(), nodes, edges })
   }
 
   // === 布局 ===
 
   runLayout() {
+    if (this.isMindMap()) {
+      this._runMindMapLayout()
+      return
+    }
+
     // 布局前临时解锁，让 fcose 能正常排布节点
     this.cy.nodes().forEach((n) => {
       try { n.unlock() } catch {}
@@ -486,6 +534,117 @@ export class GraphManager {
       if (this._lastVisibleNodeIds?.size) this.fitToVisibleNodes(this._lastVisibleNodeIds)
       this._scheduleMinimapDraw()
     })
+  }
+
+  /**
+   * XMind 风格的稳定左右树布局。只读取 hierarchy 边；业务关系不会改变主题层级。
+   * 根固定在逻辑原点，一级主题的 branchSide 由 store 持久化，后代继承所在侧。
+   */
+  _runMindMapLayout() {
+    const root = this._getMindMapRoot()
+    if (root.empty()) return
+
+    const nodes = this.cy.nodes('[mindMap = "yes"]').filter((node) => !node.isParent())
+    const nodeById = new Map(nodes.map((node) => [node.id(), node]))
+    const childrenById = new Map([...nodeById.keys()].map((id) => [id, []]))
+    const hierarchyEdges = this.cy.edges().filter((edge) => {
+      const hierarchy = edge.data('hierarchy')
+      return hierarchy === true || hierarchy === 'yes' || edge.data('type') === '子节点'
+    })
+
+    hierarchyEdges.forEach((edge) => {
+      const sourceId = edge.source().id()
+      const targetId = edge.target().id()
+      if (!nodeById.has(sourceId) || !nodeById.has(targetId)) return
+      childrenById.get(sourceId)?.push(targetId)
+    })
+
+    const rootChildren = childrenById.get(root.id()) ?? []
+    const sideByRootChild = new Map()
+    let leftCount = 0
+    let rightCount = 0
+    rootChildren.forEach((id, index) => {
+      const storedSide = nodeById.get(id)?.data('branchSide')
+      let side = storedSide === 'left' || storedSide === 'right' ? storedSide : null
+      if (!side) {
+        if (leftCount === rightCount) side = index % 2 === 0 ? 'right' : 'left'
+        else side = leftCount < rightCount ? 'left' : 'right'
+      }
+      sideByRootChild.set(id, side)
+      if (side === 'left') leftCount += 1
+      else rightCount += 1
+    })
+
+    const weightMemo = new Map()
+    const subtreeWeight = (id, visiting = new Set()) => {
+      if (weightMemo.has(id)) return weightMemo.get(id)
+      if (visiting.has(id)) return 1
+      const nextVisiting = new Set(visiting).add(id)
+      const children = childrenById.get(id) ?? []
+      const childWeight = children.reduce(
+        (sum, childId) => sum + subtreeWeight(childId, nextVisiting),
+        0
+      )
+      const nodeHeight = nodeById.get(id)?.outerHeight() ?? 0
+      const ownWeight = Math.max(1, (nodeHeight + 32) / MIND_MAP_ROW_GAP)
+      const normalized = Math.max(ownWeight, childWeight)
+      weightMemo.set(id, normalized)
+      return normalized
+    }
+
+    const positions = new Map([[root.id(), { x: 0, y: 0 }]])
+    const visited = new Set([root.id()])
+
+    const placeSubtree = (id, depth, side, top) => {
+      if (visited.has(id)) return
+      visited.add(id)
+      const weight = subtreeWeight(id)
+      const direction = side === 'left' ? -1 : 1
+      positions.set(id, {
+        x: direction * (MIND_MAP_ROOT_GAP + Math.max(0, depth - 1) * MIND_MAP_LEVEL_GAP),
+        y: top + (weight * MIND_MAP_ROW_GAP) / 2,
+      })
+
+      const children = childrenById.get(id) ?? []
+      const childWeight = children.reduce((sum, childId) => sum + subtreeWeight(childId), 0)
+      let childTop = top + ((weight - childWeight) * MIND_MAP_ROW_GAP) / 2
+      for (const childId of children) {
+        placeSubtree(childId, depth + 1, side, childTop)
+        childTop += subtreeWeight(childId) * MIND_MAP_ROW_GAP
+      }
+    }
+
+    for (const side of ['left', 'right']) {
+      const branches = rootChildren.filter((id) => sideByRootChild.get(id) === side)
+      const totalWeight = branches.reduce((sum, id) => sum + subtreeWeight(id), 0)
+      let top = -(totalWeight * MIND_MAP_ROW_GAP) / 2
+      for (const id of branches) {
+        placeSubtree(id, 1, side, top)
+        top += subtreeWeight(id) * MIND_MAP_ROW_GAP
+      }
+    }
+
+    // 严格的思维导图本应全部从中心可达；导入异常数据时仍给孤立节点稳定位置。
+    const detached = [...nodeById.keys()].filter((id) => !visited.has(id))
+    detached.forEach((id, index) => {
+      positions.set(id, {
+        x: (index % 2 === 0 ? 1 : -1) * MIND_MAP_ROOT_GAP,
+        y: MIND_MAP_ROW_GAP * (2 + Math.floor(index / 2)),
+      })
+    })
+
+    this.cy.batch(() => {
+      nodes.forEach((node) => {
+        try { node.unlock() } catch {}
+        const position = positions.get(node.id())
+        if (position) node.position(position)
+      })
+    })
+
+    this._applyNodeDragMode()
+    const visible = nodes.filter((node) => !node.hasClass('kg-hidden'))
+    this.cy.fit(visible.nonempty() ? visible : nodes, 80)
+    this._scheduleMinimapDraw()
   }
 
   setLayoutOptions(opts) {
@@ -667,6 +826,11 @@ export class GraphManager {
     const child = this.cy.getElementById(childId)
     if (parent.empty() || child.empty()) return
 
+    if (this.isMindMap()) {
+      this._runMindMapLayout()
+      return
+    }
+
     const siblings = parent.outgoers('node')
     const index = siblings.length - 1
     const pos = parent.position()
@@ -785,8 +949,32 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
     style: { 'background-color': '#ffffff', 'border-color': '#dddddd' },
   },
   {
-    selector: 'node[important]',
+    selector: 'node[important = "yes"]',
     style: { color: '#c0392b' },
+  },
+  {
+    selector: 'node[mindMap = "yes"]',
+    style: {
+      'font-size': 14,
+      'text-max-width': 150,
+      padding: '10px',
+      color: '#26364d',
+      'border-color': '#9aabc2',
+      'border-width': 2,
+    },
+  },
+  {
+    selector: 'node[isRoot = "yes"]',
+    style: {
+      'font-size': 18,
+      'font-weight': 'bold',
+      'text-max-width': 190,
+      padding: '14px',
+      color: '#ffffff',
+      'background-color': '#397ec8',
+      'border-color': '#2b68a9',
+      'border-width': 3,
+    },
   },
   {
     selector: 'node[group = "org"]',
@@ -869,6 +1057,17 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
   { selector: 'edge[category = "conflict"]', style: { 'line-color': '#c0392b', 'target-arrow-color': '#c0392b' } },
   { selector: 'edge[category = "other"]', style: { 'line-color': '#bbbbbb', 'target-arrow-color': '#bbbbbb' } },
   {
+    selector: 'edge[hierarchy = "yes"]',
+    style: {
+      width: 2,
+      opacity: 0.9,
+      'line-color': '#6f9fd8',
+      'target-arrow-shape': 'none',
+      'curve-style': 'bezier',
+      label: '',
+    },
+  },
+  {
     selector: '.highlighted',
     style: {
       'border-width': 3,
@@ -911,6 +1110,10 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
   {
     selector: '.selected',
     style: { 'border-width': 2, 'border-color': '#27ae60' },
+  },
+  {
+    selector: 'node[isRoot = "yes"].selected',
+    style: { 'border-width': 4 },
   },
   {
     selector: 'edge.selected',
@@ -957,8 +1160,24 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
         style: { 'background-color': '#151d31', 'border-color': '#56617d' },
       },
       {
-        selector: 'node[important]',
+        selector: 'node[important = "yes"]',
         style: { color: '#ff8f86' },
+      },
+      {
+        selector: 'node[mindMap = "yes"]',
+        style: {
+          'background-color': '#141b2d',
+          color: '#e4ebff',
+          'border-color': '#53617d',
+        },
+      },
+      {
+        selector: 'node[isRoot = "yes"]',
+        style: {
+          'background-color': '#294e82',
+          color: '#ffffff',
+          'border-color': '#70a5e8',
+        },
       },
       {
         selector: 'node[group = "org"]',
@@ -991,6 +1210,14 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
           color: '#d6def5',
           'text-background-color': '#101624',
           'text-border-color': '#34405a',
+        },
+      },
+      {
+        selector: 'edge[hierarchy = "yes"]',
+        style: {
+          opacity: 0.9,
+          'line-color': '#5f8fc8',
+          'target-arrow-shape': 'none',
         },
       },
       {

@@ -1,5 +1,5 @@
 import { RELATION_CATEGORIES, getCategoryMeta, enrichEdge } from './relationCategories.js'
-import { createDefaultViewState, loadViewState, saveViewState } from './viewState.js'
+import { createDefaultViewState, hasSavedViewState, loadViewState, saveViewState } from './viewState.js'
 import {
   computeVisibility,
   getTimelineRange,
@@ -27,14 +27,23 @@ export class ViewManager {
   }
 
   resetForGraph(graphId) {
+    const isMindMap = graphId === this.store.getCurrentGraphId()
+      && Boolean(this.store.getMindMapRootId?.())
     this.state = createDefaultViewState({
       focusNodeId: this.store.pickDefaultFocusNodeId(),
+      viewMode: isMindMap ? 'full' : 'focus',
     })
     saveViewState(graphId, this.state)
   }
 
   loadForGraph(graphId) {
+    const hadSavedView = hasSavedViewState(graphId)
     this.state = loadViewState(graphId)
+    const graphData = this.store.exportData().dataMap?.[graphId]
+    // 旧版本创建的纯层级图没有 mode 元数据；首次升级为思维导图时默认展示整棵树。
+    if (!hadSavedView && this.store.getMindMapRootId?.() && graphData?.mode !== 'mindmap') {
+      this.state.viewMode = 'full'
+    }
     if (!this.state.focusNodeId || !this.store.getNode(this.state.focusNodeId)) {
       this.state.focusNodeId = this.store.pickDefaultFocusNodeId()
     }
@@ -94,11 +103,15 @@ export class ViewManager {
       this._aggregateMembers.set(agg.id, agg.memberIds)
     }
 
+    const mindMapStructure = this.store.getMindMapStructure?.() ?? null
+
     const elements = this.store.toCytoscapeElements({ aggregateNodes })
     this.graph.sync(elements, { layout, applyVisibility: false })
     this.graph.applyVisibility(visibleNodeIds, visibleEdgeIds)
     this.graph.setShowEdgeLabels(this.state.showEdgeLabels)
-    if (!layout) {
+    // 思维导图是即时定位布局；sync 后再按实际可见节点缩放，
+    // 避免被时间轴或其他可见性状态隐藏的节点仍撑大画布。
+    if (!layout || mindMapStructure) {
       this.graph.fitToVisibleNodes(visibleNodeIds)
     }
 

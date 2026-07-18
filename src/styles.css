@@ -396,6 +396,13 @@ body {
   min-height: 28px;
 }
 
+.focus-center-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .focus-center-info {
   display: flex;
   align-items: baseline;
@@ -1229,6 +1236,7 @@ select:focus {
 }
 
 .node-action-label {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1238,7 +1246,7 @@ select:focus {
 
 .node-action-btn {
   min-width: 76px;
-  min-height: 34px;
+  min-height: 44px;
   flex-shrink: 0;
   border: none;
   border-radius: 8px;
@@ -1266,6 +1274,16 @@ select:focus {
   background: #ffe4ad;
 }
 
+.node-action-btn.tertiary {
+  color: #315c8c;
+  background: #eaf3ff;
+}
+
+.node-action-btn.tertiary:hover,
+.node-action-btn.tertiary:focus-visible {
+  background: #d9eaff;
+}
+
 #cy.move-mode {
   cursor: crosshair;
 }
@@ -1276,10 +1294,18 @@ select:focus {
     width: calc(100% - 20px);
     max-width: 440px;
     justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .node-action-label {
+    flex-basis: 100%;
+    text-align: center;
   }
 
   .node-action-btn {
-    min-height: 40px;
+    min-width: 64px;
+    flex: 1 1 64px;
+    min-height: 44px;
     padding-inline: 14px;
   }
 }
@@ -1431,6 +1457,16 @@ body.theme-dark .node-action-btn.secondary {
 body.theme-dark .node-action-btn.secondary:hover,
 body.theme-dark .node-action-btn.secondary:focus-visible {
   background: #5b421e;
+}
+
+body.theme-dark .node-action-btn.tertiary {
+  color: #c9ddff;
+  background: #233958;
+}
+
+body.theme-dark .node-action-btn.tertiary:hover,
+body.theme-dark .node-action-btn.tertiary:focus-visible {
+  background: #2c4a73;
 }
 
 body.theme-dark input[type='text'],

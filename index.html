@@ -31,6 +31,9 @@
         <div id="editor-layer" class="editor-layer"></div>
         <div id="node-action-bar" class="node-action-bar hidden" aria-live="polite">
           <span id="node-action-label" class="node-action-label"></span>
+          <button type="button" class="node-action-btn tertiary" id="btn-add-child-node">子主题</button>
+          <button type="button" class="node-action-btn tertiary" id="btn-add-sibling-node">同级</button>
+          <button type="button" class="node-action-btn tertiary" id="btn-edit-selected-node">编辑</button>
           <button type="button" class="node-action-btn" id="btn-move-node">移动到…</button>
           <button type="button" class="node-action-btn secondary" id="btn-cancel-move" hidden>取消</button>
         </div>
@@ -65,7 +68,7 @@
 
           <h3 class="section-title">视图模式</h3>
           <div class="view-mode-group" id="view-mode-group">
-            <label class="radio-row"><input type="radio" name="view-mode" value="focus" checked /> 中心展开（默认）</label>
+            <label class="radio-row"><input type="radio" name="view-mode" value="focus" checked /> 中心展开</label>
             <label class="radio-row"><input type="radio" name="view-mode" value="expand" /> 渐进展开</label>
             <label class="radio-row"><input type="radio" name="view-mode" value="full" /> 显示全部</label>
           </div>
@@ -76,10 +79,13 @@
           <div id="focus-center-wrap" class="focus-center-wrap">
             <div class="focus-center-row">
               <div class="focus-center-info">
-                <span class="focus-center-label">当前中心</span>
-                <strong id="val-focus-node" class="focus-center-name" title="中心展开模式下，单击节点可切换中心">—</strong>
+                <span id="focus-center-label" class="focus-center-label">当前中心</span>
+                <strong id="val-focus-node" class="focus-center-name" title="使用“设为中心”可主动切换中心">—</strong>
               </div>
-              <button type="button" class="btn btn-sm focus-reset-btn" id="btn-reset-focus">恢复默认</button>
+              <div class="focus-center-actions">
+                <button type="button" class="btn btn-sm" id="btn-set-focus">设为中心</button>
+                <button type="button" class="btn btn-sm focus-reset-btn" id="btn-reset-focus">恢复默认</button>
+              </div>
             </div>
           </div>
 
@@ -114,17 +120,24 @@
           <p class="hint">节点可设置 tags 数组，同标签可折叠为一组</p>
           <div id="aggregate-actions" class="aggregate-actions"></div>
 
-          <h3 class="section-title">布局</h3>
-          <div class="layout-section compact">
-            <div class="layout-field">
-              <label>斥力 <span id="val-repulsion">8000</span></label>
-              <input type="range" id="layout-repulsion" min="1000" max="30000" step="500" value="8000" />
+          <div id="network-layout-section">
+            <h3 class="section-title">布局</h3>
+            <div class="layout-section compact">
+              <div class="layout-field">
+                <label>斥力 <span id="val-repulsion">8000</span></label>
+                <input type="range" id="layout-repulsion" min="1000" max="30000" step="500" value="8000" />
+              </div>
+              <div class="layout-field">
+                <label>边长 <span id="val-edge-length">160</span></label>
+                <input type="range" id="layout-edge-length" min="50" max="500" step="10" value="160" />
+              </div>
+              <button class="btn btn-block primary" id="btn-apply-layout">应用并重新布局</button>
             </div>
-            <div class="layout-field">
-              <label>边长 <span id="val-edge-length">160</span></label>
-              <input type="range" id="layout-edge-length" min="50" max="500" step="10" value="160" />
-            </div>
-            <button class="btn btn-block primary" id="btn-apply-layout">应用并重新布局</button>
+          </div>
+          <div id="mindmap-layout-section" class="hidden">
+            <h3 class="section-title">思维导图布局</h3>
+            <p class="hint">中心主题固定，一级主题稳定分布在左右两侧。</p>
+            <button class="btn btn-block primary" id="btn-mindmap-layout">重新整理分支</button>
           </div>
         </div>
 
@@ -143,7 +156,8 @@
             <li><span class="shortcut-desc">移动视角</span><span class="shortcut-keys">拖拽画布</span></li>
             <li><span class="shortcut-desc">拖拽节点</span><span class="shortcut-keys"><kbd>Space</kbd> + 拖拽</span></li>
             <li><span class="shortcut-desc">选择节点/连线</span><span class="shortcut-keys">单击</span></li>
-            <li><span class="shortcut-desc">中心/渐进展开</span><span class="shortcut-keys">选择模式后单击节点</span></li>
+            <li><span class="shortcut-desc">切换中心</span><span class="shortcut-keys">选择节点后点“设为中心”</span></li>
+            <li><span class="shortcut-desc">渐进展开</span><span class="shortcut-keys">选择该模式后单击节点</span></li>
             <li><span class="shortcut-desc">移动已有节点</span><span class="shortcut-keys">选中后点“移动到…”</span></li>
             <li><span class="shortcut-desc">关联节点</span><span class="shortcut-keys"><kbd>Shift</kbd>+点击 / <kbd>L</kbd></span></li>
             <li><span class="shortcut-desc">编辑节点/连线</span><span class="shortcut-keys"><kbd>Enter</kbd> / <kbd>F2</kbd> / 双击</span></li>

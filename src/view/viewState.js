@@ -3,7 +3,7 @@ import { defaultActiveCategories } from './relationCategories.js'
 const STORAGE_KEY = 'kg-viewer-view'
 
 export const VIEW_MODES = {
-  focus: { id: 'focus', label: '中心展开', desc: '单击节点切换中心，只显示 N 跳关系' },
+  focus: { id: 'focus', label: '中心展开', desc: '选择节点后主动设为中心，只显示 N 跳关系' },
   expand: { id: 'expand', label: '渐进展开', desc: '单击节点累加展开，不会自动切换模式' },
   full: { id: 'full', label: '显示全部', desc: '显示所有节点（可能很乱）' },
 }
@@ -41,6 +41,17 @@ export function loadViewState(graphId) {
     })
   } catch {
     return createDefaultViewState()
+  }
+}
+
+export function hasSavedViewState(graphId) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return false
+    const all = JSON.parse(raw)
+    return Object.prototype.hasOwnProperty.call(all, graphId)
+  } catch {
+    return false
   }
 }
 

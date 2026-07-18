@@ -17,7 +17,15 @@ function normalizeNodeLinks(links) {
 }
 
 function isHierarchyEdge(edge) {
-  return edge?.hierarchy === true || edge?.type === '子节点'
+  return edge?.hierarchy === true || edge?.hierarchy === 'yes' || edge?.type === '子节点'
+}
+
+function normalizeBranchSide(side) {
+  return side === 'left' || side === 'right' ? side : ''
+}
+
+function isExplicitRoot(node) {
+  return node?.isRoot === true || node?.isRoot === 'yes'
 }
 
 export class KnowledgeStore {
@@ -110,8 +118,136 @@ export class KnowledgeStore {
     return this._currentData().edges.find((e) => e.id === id) ?? null
   }
 
+  isHierarchyEdge(edgeOrId) {
+    const edge = typeof edgeOrId === 'string' ? this.getEdge(edgeOrId) : edgeOrId
+    return isHierarchyEdge(edge)
+  }
+
   getAllNodes() {
     return this._currentData().nodes.map((n) => ({ ...n }))
+  }
+
+  /**
+   * 返回当前思维导图的中心节点。
+   *
+   * 新数据以 mode + rootNodeId 为准；旧数据只有在所有普通节点恰好组成
+   * 一棵完整的层级树时才会推断根节点，避免把普通关系图误判为思维导图。
+   */
+  getMindMapRootId() {
+    const data = this._currentData()
+    const ordinaryNodes = data.nodes.filter((node) => node.group !== 'org' && node.group !== 'aggregate')
+    const nodeById = new Map(ordinaryNodes.map((node) => [node.id, node]))
+
+    if (data.mode === 'mindmap' && data.rootNodeId && nodeById.has(data.rootNodeId)) {
+      return data.rootNodeId
+    }
+
+    const explicitRoot = ordinaryNodes.find(isExplicitRoot)
+    if (explicitRoot) return explicitRoot.id
+
+    if (data.nodes.some((node) => node.group === 'org')) return null
+    if (ordinaryNodes.length < 2) return null
+
+    const hierarchyEdges = data.edges.filter(isHierarchyEdge)
+    if (hierarchyEdges.length !== ordinaryNodes.length - 1) return null
+    if (hierarchyEdges.some((edge) => (
+      edge.source === edge.target || !nodeById.has(edge.source) || !nodeById.has(edge.target)
+    ))) return null
+
+    const incomingCount = new Map(ordinaryNodes.map((node) => [node.id, 0]))
+    const undirected = new Map(ordinaryNodes.map((node) => [node.id, []]))
+    for (const edge of hierarchyEdges) {
+      incomingCount.set(edge.target, incomingCount.get(edge.target) + 1)
+      if (incomingCount.get(edge.target) > 1) return null
+      undirected.get(edge.source).push(edge.target)
+      undirected.get(edge.target).push(edge.source)
+    }
+
+    const roots = ordinaryNodes.filter((node) => incomingCount.get(node.id) === 0)
+    if (roots.length !== 1) return null
+
+    const visited = new Set()
+    const pending = [roots[0].id]
+    while (pending.length) {
+      const id = pending.pop()
+      if (visited.has(id)) continue
+      visited.add(id)
+      pending.push(...undirected.get(id))
+    }
+
+    return visited.size === ordinaryNodes.length ? roots[0].id : null
+  }
+
+  isRootNode(nodeId) {
+    return !!nodeId && this.getMindMapRootId() === nodeId
+  }
+
+  /**
+   * 返回可直接给布局层使用的可序列化思维导图结构。
+   * 只读取明确的层级边，不会把普通业务关系当成父子关系。
+   */
+  getMindMapStructure() {
+    const rootId = this.getMindMapRootId()
+    if (!rootId) return null
+
+    const { nodes, edges } = this._currentData()
+    const ordinaryNodes = nodes.filter((node) => node.group !== 'org' && node.group !== 'aggregate')
+    const nodeIds = new Set(ordinaryNodes.map((node) => node.id))
+    const parentById = {}
+    const childrenById = Object.fromEntries(ordinaryNodes.map((node) => [node.id, []]))
+
+    for (const edge of edges) {
+      if (
+        !isHierarchyEdge(edge)
+        || !nodeIds.has(edge.source)
+        || !nodeIds.has(edge.target)
+        || edge.target === rootId
+        || parentById[edge.target]
+      ) continue
+      parentById[edge.target] = edge.source
+      childrenById[edge.source].push(edge.target)
+    }
+
+    const nodeById = new Map(ordinaryNodes.map((node) => [node.id, node]))
+    const branchSideById = this._getRootBranchAssignments(rootId, childrenById[rootId], nodeById)
+
+    return { rootId, parentById, childrenById, branchSideById }
+  }
+
+  _getRootBranchAssignments(rootId, childIds, nodeById = null, excludedNodeId = null) {
+    const nodesById = nodeById ?? new Map(this._currentData().nodes.map((node) => [node.id, node]))
+    const assignments = {}
+    if (!rootId) return assignments
+    let leftCount = 0
+    let rightCount = 0
+
+    for (const childId of childIds ?? []) {
+      if (childId === excludedNodeId) continue
+      let side = normalizeBranchSide(nodesById.get(childId)?.branchSide)
+      if (!side) side = rightCount <= leftCount ? 'right' : 'left'
+      assignments[childId] = side
+      if (side === 'left') leftCount += 1
+      else rightCount += 1
+    }
+
+    return assignments
+  }
+
+  _nextRootBranchSide(rootId, excludedNodeId = null) {
+    const { nodes, edges } = this._currentData()
+    const childIds = edges
+      .filter((edge) => edge.source === rootId && isHierarchyEdge(edge) && edge.target !== excludedNodeId)
+      .map((edge) => edge.target)
+    const assignments = this._getRootBranchAssignments(
+      rootId,
+      childIds,
+      new Map(nodes.map((node) => [node.id, node])),
+      excludedNodeId
+    )
+    const sides = Object.values(assignments)
+    const leftCount = sides.filter((side) => side === 'left').length
+    const rightCount = sides.length - leftCount
+    return rightCount <= leftCount ? 'right' : 'left'
   }
 
   getParentId(nodeId) {
@@ -134,6 +270,13 @@ export class KnowledgeStore {
     const { nodes } = this._currentData()
     const node = nodes.find((n) => n.id === id)
     if (!node) throw new Error('节点不存在')
+    if (
+      this.isRootNode(id)
+      && updates.parent !== undefined
+      && (updates.parent || '') !== (node.parent || '')
+    ) {
+      throw new Error('中心节点不能移动到分组中')
+    }
 
     const nextLabel = updates.label !== undefined ? updates.label.trim() : node.label
     const nextGroup = updates.group !== undefined ? updates.group : node.group
@@ -172,6 +315,7 @@ export class KnowledgeStore {
   }
 
   deleteNode(id) {
+    if (this.isRootNode(id)) throw new Error('中心节点不能删除')
     this._pushHistory()
     this.dataMap[this.currentGraphId].nodes = this._currentData().nodes.filter((n) => n.id !== id)
     this.dataMap[this.currentGraphId].edges = this._currentData().edges.filter(
@@ -184,8 +328,13 @@ export class KnowledgeStore {
     const trimmedLabel = label.trim() || '新节点'
     const id = this.generateNodeId(trimmedLabel)
 
+    const node = { id, label: trimmedLabel, group: '' }
+    if (parentId && this.isRootNode(parentId)) {
+      node.branchSide = this._nextRootBranchSide(parentId)
+    }
+
     this._pushHistory()
-    this.dataMap[this.currentGraphId].nodes.push({ id, label: trimmedLabel, group: '' })
+    this.dataMap[this.currentGraphId].nodes.push(node)
 
     if (parentId) {
       this.dataMap[this.currentGraphId].edges.push({
@@ -202,6 +351,8 @@ export class KnowledgeStore {
   }
 
   addSiblingNode(nodeId, label = '新节点') {
+    // 中心主题没有同级，任何入口都只能在它下面创建一级主题。
+    if (this.isRootNode(nodeId)) return this.addChildNode(nodeId, label)
     const parentId = this.getParentId(nodeId)
     if (!parentId) {
       const trimmedLabel = label.trim() || '新节点'
@@ -221,6 +372,7 @@ export class KnowledgeStore {
     const parent = nodes.find((item) => item.id === parentId)
     if (!node || !parent) throw new Error('节点不存在')
     if (nodeId === parentId) throw new Error('不能移动到自己下面')
+    if (this.isRootNode(nodeId)) throw new Error('中心节点不能移动')
     if (node.group === 'org' || parent.group === 'org') {
       throw new Error('家族分组不能作为普通节点层级移动')
     }
@@ -235,9 +387,16 @@ export class KnowledgeStore {
 
     const hierarchyEdges = edges.filter((edge) => edge.target === nodeId && isHierarchyEdge(edge))
     const primaryEdge = hierarchyEdges[0]
-    if (primaryEdge?.source === parentId && hierarchyEdges.length === 1) return false
+    const movingToRoot = this.isRootNode(parentId)
+    const nextBranchSide = movingToRoot
+      ? normalizeBranchSide(node.branchSide) || this._nextRootBranchSide(parentId, nodeId)
+      : ''
+    const branchSideChanged = normalizeBranchSide(node.branchSide) !== nextBranchSide
+    if (primaryEdge?.source === parentId && hierarchyEdges.length === 1 && !branchSideChanged) return false
 
     this._pushHistory()
+    if (nextBranchSide) node.branchSide = nextBranchSide
+    else delete node.branchSide
     if (primaryEdge) {
       primaryEdge.source = parentId
       primaryEdge.type = '子节点'
@@ -284,6 +443,7 @@ export class KnowledgeStore {
     const { edges } = this._currentData()
     const edge = edges.find((e) => e.id === id)
     if (!edge) throw new Error('关系不存在')
+    if (isHierarchyEdge(edge)) throw new Error('层级连线不能直接编辑，请使用“移动到…”调整层级')
     const nextType = updates.type !== undefined ? updates.type.trim() : edge.type
     const nextCategory = updates.category !== undefined ? updates.category : edge.category
     if (nextType === edge.type && nextCategory === edge.category) return
@@ -295,6 +455,9 @@ export class KnowledgeStore {
   }
 
   deleteEdge(id) {
+    const edge = this.getEdge(id)
+    if (!edge) return
+    if (isHierarchyEdge(edge)) throw new Error('层级连线不能直接删除，请移动或删除对应节点')
     this._pushHistory()
     this.dataMap[this.currentGraphId].edges = this._currentData().edges.filter((e) => e.id !== id)
     this._notify()
@@ -331,7 +494,11 @@ export class KnowledgeStore {
     const { nodes, edges } = this._currentData()
     this._getRedoStack().push({ nodes: nodes.map((n) => ({ ...n })), edges: edges.map((e) => ({ ...e })) })
     const prev = stack.pop()
-    this.dataMap[this.currentGraphId] = { nodes: prev.nodes.map((n) => ({ ...n })), edges: prev.edges.map((e) => ({ ...e })) }
+    this.dataMap[this.currentGraphId] = {
+      ...this._currentData(),
+      nodes: prev.nodes.map((n) => ({ ...n })),
+      edges: prev.edges.map((e) => ({ ...e })),
+    }
     this._notify()
     return true
   }
@@ -342,7 +509,11 @@ export class KnowledgeStore {
     const { nodes, edges } = this._currentData()
     this._getUndoStack().push({ nodes: nodes.map((n) => ({ ...n })), edges: edges.map((e) => ({ ...e })) })
     const next = stack.pop()
-    this.dataMap[this.currentGraphId] = { nodes: next.nodes.map((n) => ({ ...n })), edges: next.edges.map((e) => ({ ...e })) }
+    this.dataMap[this.currentGraphId] = {
+      ...this._currentData(),
+      nodes: next.nodes.map((n) => ({ ...n })),
+      edges: next.edges.map((e) => ({ ...e })),
+    }
     this._notify()
     return true
   }
@@ -363,7 +534,11 @@ export class KnowledgeStore {
       dataMap: Object.fromEntries(
         Object.entries(this.dataMap).map(([id, d]) => [
           id,
-          { nodes: d.nodes.map((n) => ({ ...n })), edges: d.edges.map((e) => ({ ...e })) },
+          {
+            ...d,
+            nodes: (d.nodes ?? []).map((n) => ({ ...n })),
+            edges: (d.edges ?? []).map((e) => ({ ...e })),
+          },
         ])
       ),
       currentGraphId: this.currentGraphId,
@@ -373,6 +548,7 @@ export class KnowledgeStore {
   toCytoscapeElements({ aggregateNodes = [] } = {}) {
     const { nodes, edges } = this._currentData()
     const enriched = enrichEdges(edges)
+    const rootId = this.getMindMapRootId()
     return [
       ...nodes.map((n) => ({
         data: {
@@ -380,9 +556,12 @@ export class KnowledgeStore {
           label: n.label,
           group: n.group || '',
           gender: n.gender || '',
-          important: n.important || '',
+          important: n.important === true || n.important === 'yes' ? 'yes' : '',
           parent: n.parent || '',
           tags: Array.isArray(n.tags) ? n.tags.join(',') : n.tag || '',
+          isRoot: n.id === rootId ? 'yes' : 'no',
+          mindMap: rootId && n.group !== 'org' && n.group !== 'aggregate' ? 'yes' : 'no',
+          branchSide: normalizeBranchSide(n.branchSide),
         },
       })),
       ...aggregateNodes.map((n) => ({
@@ -394,6 +573,9 @@ export class KnowledgeStore {
           important: '',
           parent: n.parent || '',
           aggregateKey: n.aggregateKey || '',
+          isRoot: 'no',
+          mindMap: 'no',
+          branchSide: '',
         },
       })),
       ...enriched.map((e) => ({
@@ -403,6 +585,7 @@ export class KnowledgeStore {
           target: e.target,
           type: e.type || '',
           category: e.category,
+          hierarchy: isHierarchyEdge(e) ? 'yes' : 'no',
         },
       })),
     ]
@@ -414,6 +597,8 @@ export class KnowledgeStore {
 
   pickDefaultFocusNodeId() {
     const nodes = this.getAllNodes().filter((n) => n.group !== 'org' && n.group !== 'aggregate')
+    const rootId = this.getMindMapRootId()
+    if (rootId && nodes.some((node) => node.id === rootId)) return rootId
     const important = nodes.find((n) => n.important === 'yes' || n.important === true)
     if (important) return important.id
     let best = nodes[0]?.id ?? null
@@ -499,9 +684,16 @@ export class KnowledgeStore {
 
   createGraph(name, description = '') {
     const id = this._generateId()
+    const graphName = String(name ?? '').trim() || '新图谱'
+    const rootNodeId = 'root'
     this._pushHistory()
-    this.graphs.unshift({ id, name, description, updatedAt: new Date().toISOString() })
-    this.dataMap[id] = { nodes: [], edges: [] }
+    this.graphs.unshift({ id, name: graphName, description, updatedAt: new Date().toISOString() })
+    this.dataMap[id] = {
+      mode: 'mindmap',
+      rootNodeId,
+      nodes: [{ id: rootNodeId, label: graphName, group: '', isRoot: true }],
+      edges: [],
+    }
     this.currentGraphId = id
     this._clearHistory()
     this._notify()

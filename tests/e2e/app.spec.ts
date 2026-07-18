@@ -196,13 +196,30 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(moveButton).toBeVisible()
 
     const buttonBox = await moveButton.boundingBox()
-    expect(buttonBox?.height ?? 0).toBeGreaterThanOrEqual(40)
+    expect(buttonBox?.height ?? 0).toBeGreaterThanOrEqual(44)
     expect((await actionBar.boundingBox())?.width ?? 999).toBeLessThanOrEqual(370)
 
     await moveButton.click()
     await expect(page.locator('#btn-cancel-move')).toBeVisible()
     await page.locator('#btn-cancel-move').click()
     await expect(moveButton).toBeVisible()
+
+    page.once('dialog', (dialog) => dialog.accept('手机导图'))
+    await page.click('#btn-new-graph')
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await expect(actionBar).toBeVisible()
+    await expect(moveButton).toBeHidden()
+    await expect(page.locator('#btn-add-sibling-node')).toBeHidden()
+    await expect(page.locator('#btn-add-child-node')).toBeVisible()
+    await expect(page.locator('#mindmap-layout-section')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => ({
+      locked: window.cy?.getElementById('root').locked(),
+      grabbable: window.cy?.getElementById('root').grabbable(),
+    }))).toEqual({ locked: true, grabbable: false })
+
+    await page.locator('#btn-add-child-node').click()
+    await expect(page.locator('.node-editor.editing textarea')).toBeFocused()
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
   })
 
   test('布局设置滑块应该能调整', async ({ page }) => {
@@ -237,16 +254,45 @@ test.describe('知识图谱编辑器 - E2E', () => {
       .poll(() => page.evaluate(() => document.activeElement?.id || ''))
       .not.toBe('btn-new-graph')
 
-    // 空图谱第一次按 Tab 创建根节点并进入编辑。
+    // 新图谱创建后立即有且只有一个中心主题，不再等待第一次按键临时生成。
+    await expect
+      .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
+      .toBe(1)
+    const rootState = await page.evaluate(() => {
+      const root = window.cy?.getElementById('root')
+      return {
+        label: root?.data('label'),
+        isRoot: root?.data('isRoot'),
+        mindMap: root?.data('mindMap'),
+        locked: root?.locked(),
+        grabbable: root?.grabbable(),
+      }
+    })
+    expect(rootState).toMatchObject({
+      label: '技术',
+      isRoot: 'yes',
+      mindMap: 'yes',
+      locked: true,
+      grabbable: false,
+    })
+    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+    await expect(page.locator('#focus-center-label')).toHaveText('中心主题')
+    await expect(page.locator('#val-focus-node')).toHaveText('技术')
+    await expect(page.locator('#btn-set-focus')).toBeDisabled()
+    await expect(page.locator('#network-layout-section')).toHaveClass(/hidden/)
+    await expect(page.locator('#mindmap-layout-section')).not.toHaveClass(/hidden/)
+
+    // Tab 在中心主题下创建一级主题并直接进入编辑。
     await page.keyboard.press('Tab')
     const editor = page.locator('.node-editor.editing textarea')
     await expect(editor).toBeVisible()
     await expect(editor).toBeFocused()
     await page.evaluate(() => window.cy?.zoom(3))
-    await editor.fill('技术')
+    await expect(editor).toHaveValue('新节点')
+    await editor.fill('XPath')
 
-    // 编辑时再次按 Tab：提交当前文本，创建子节点，并把输入焦点交给子节点。
-    await editor.press('Tab')
+    // 一级主题按 Enter 创建同级主题；中心本身不会产生第二个根。
+    await editor.press('Enter')
     await expect(editor).toBeFocused()
     await expect(editor).toHaveValue('新节点')
 
@@ -266,31 +312,109 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
     await expect
       .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
-      .toBe(2)
+      .toBe(3)
     await expect
       .poll(() => page.evaluate(() => window.cy?.edges().length ?? 0))
-      .toBe(1)
+      .toBe(2)
 
-    // 连续按 Tab 创建下一级节点时，节点之间也必须保持可见间距。
-    await editor.fill('子节点')
-    await editor.press('Tab')
-    await expect(editor).toHaveValue('新节点')
-    await expect
-      .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
-      .toBe(3)
+    await editor.fill('Obsidian')
+    await page.locator('#sidebar').click({ position: { x: 20, y: 20 } })
 
-    const minimumNodeDistance = await page.evaluate(() => {
-      const nodes = window.cy?.nodes().toArray() ?? []
-      const distances = nodes.flatMap((node, index) =>
-        nodes.slice(index + 1).map((other) => {
-          const first = node.position()
-          const second = other.position()
-          return Math.hypot(first.x - second.x, first.y - second.y)
-        }),
-      )
-      return distances.length ? Math.min(...distances) : 0
+    // 两个一级主题稳定分列中心左右，中心保持逻辑原点。
+    await expect.poll(async () => page.evaluate(() => {
+      const root = window.cy?.getElementById('root')
+      const xpath = window.cy?.nodes().filter((node) => node.data('label') === 'XPath').first()
+      const obsidian = window.cy?.nodes().filter((node) => node.data('label') === 'Obsidian').first()
+      if (!root?.nonempty() || !xpath?.nonempty() || !obsidian?.nonempty()) return false
+      const rootPos = root.position()
+      const first = xpath.position()
+      const second = obsidian.position()
+      return Math.abs(rootPos.x) < 0.01
+        && Math.abs(rootPos.y) < 0.01
+        && first.x * second.x < 0
+        && Math.abs(first.x) > 150
+        && Math.abs(second.x) > 150
+    })).toBe(true)
+
+    // undo/redo 恢复结构后也必须自动重排，不能把恢复节点放回中心原点。
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+    await page.keyboard.press('Control+Shift+z')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(3)
+    await expect.poll(() => page.evaluate(() => {
+      const root = window.cy?.getElementById('root')
+      if (!root?.nonempty()) return false
+      const rootPos = root.position()
+      return window.cy.nodes().filter((node) => node.id() !== 'root').toArray().every((node) => {
+        const pos = node.position()
+        return Math.hypot(pos.x - rootPos.x, pos.y - rootPos.y) > 150
+      })
+    })).toBe(true)
+    await page.keyboard.press('Control+Shift+z')
+    await expect.poll(() => page.evaluate(() => (
+      window.cy?.nodes().toArray().some((node) => node.data('label') === 'Obsidian') ?? false
+    ))).toBe(true)
+
+    // 层级连线只能通过节点移动调整，不能直接改名或删除。
+    const hierarchyEdgeId = await page.evaluate(() => window.cy?.edges('[hierarchy = "yes"]').first().id() || '')
+    expect(hierarchyEdgeId).not.toBe('')
+    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), hierarchyEdgeId)
+    await expect.poll(() => page.evaluate((id) => window.cy?.$('edge.selected').id() === id, hierarchyEdgeId)).toBe(true)
+    await page.keyboard.press('Delete')
+    await expect.poll(() => page.evaluate(() => window.cy?.edges().length ?? 0)).toBe(2)
+    await expect(page.locator('#toast')).toContainText('层级连线')
+
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await expect(page.locator('#node-action-bar')).toBeVisible()
+    await expect(page.locator('#btn-move-node')).toBeHidden()
+    await expect(page.locator('#btn-add-child-node')).toBeVisible()
+    await page.click('.tab[data-tab="tree"]')
+    await expect(page.locator('#tree-view [data-id="root"] [data-delete]')).toHaveCount(0)
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeVisible()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'Obsidian' })).toBeVisible()
+    await page.locator('#btn-tree-toggle').click()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeHidden()
+    await page.locator('#btn-tree-toggle').click()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeVisible()
+  })
+
+  test('思维导图中心主题不能通过删除键或空格拖拽移动', async ({ page }) => {
+    page.once('dialog', (dialog) => dialog.accept('技术'))
+    await page.click('#btn-new-graph')
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+
+    await page.keyboard.press('Delete')
+    await expect.poll(() => page.evaluate(() => window.cy?.getElementById('root').nonempty() ?? false)).toBe(true)
+    await expect(page.locator('#toast')).toContainText('中心')
+
+    const before = await page.evaluate(() => {
+      const node = window.cy?.getElementById('root')
+      const pane = document.getElementById('cy')?.getBoundingClientRect()
+      const rendered = node?.renderedPosition()
+      const position = node?.position()
+      return pane && rendered && position
+        ? { point: { x: pane.left + rendered.x, y: pane.top + rendered.y }, position }
+        : null
     })
-    expect(minimumNodeDistance).toBeGreaterThan(80)
+    expect(before).not.toBeNull()
+    if (!before) throw new Error('中心主题坐标不可用')
+
+    await page.keyboard.down(' ')
+    await page.mouse.move(before.point.x, before.point.y)
+    await page.mouse.down()
+    await page.mouse.move(before.point.x + 100, before.point.y + 80, { steps: 8 })
+    await page.mouse.up()
+    await page.keyboard.up(' ')
+
+    const after = await page.evaluate(() => window.cy?.getElementById('root').position() ?? null)
+    if (!after) throw new Error('中心主题坐标不可用')
+    expect(after.x).toBeCloseTo(before.position.x, 4)
+    expect(after.y).toBeCloseTo(before.position.y, 4)
+    await expect.poll(() => page.evaluate(() => ({
+      locked: window.cy?.getElementById('root').locked(),
+      grabbable: window.cy?.getElementById('root').grabbable(),
+    }))).toEqual({ locked: true, grabbable: false })
   })
 
   test('单击画布节点只选择，双击才进入编辑并能改名', async ({ page }) => {
@@ -333,6 +457,34 @@ test.describe('知识图谱编辑器 - E2E', () => {
       .poll(() => page.evaluate((id) => window.cy?.getElementById(id).data('label') || '', nodeId))
       .toBe('双击改名')
     await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+  })
+
+  test('中心展开模式下单击只选择，点“设为中心”才切换中心', async ({ page }) => {
+    await expect(page.locator('input[name="view-mode"][value="focus"]')).toBeChecked()
+    const beforeLabel = (await page.locator('#val-focus-node').textContent())?.trim() || ''
+    const target = await page.evaluate(() => {
+      const focusLabel = document.getElementById('val-focus-node')?.textContent?.trim()
+      const node = window.cy?.nodes().filter((item) => (
+        !item.isParent()
+        && !item.hasClass('kg-hidden')
+        && item.data('label') !== focusLabel
+      )).first()
+      return node?.nonempty()
+        ? { id: node.id(), label: node.data('label') }
+        : null
+    })
+    if (!target) return
+
+    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), target.id)
+    await expect
+      .poll(() => page.evaluate((id) => window.cy?.$('node.selected').id() === id, target.id))
+      .toBe(true)
+    await expect(page.locator('#val-focus-node')).toHaveText(beforeLabel)
+    await expect(page.locator('#btn-set-focus')).toBeEnabled()
+
+    await page.locator('#btn-set-focus').click()
+    await expect(page.locator('#val-focus-node')).toHaveText(target.label)
+    await expect(page.locator('input[name="view-mode"][value="focus"]')).toBeChecked()
   })
 
   test('未归入家族方框的节点（如刘姥姥）应该能点击选中', async ({ page }) => {

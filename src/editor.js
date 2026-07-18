@@ -1,4 +1,4 @@
-/** 图谱内联编辑：单击选择，双击或 Enter/F2 编辑，Tab 子节点，编辑中 Enter 创建同级节点 */
+/** 图谱内联编辑：单击选择，双击或 Enter/F2 编辑，Tab 子节点，编辑中 Enter 创建同级节点（中心主题创建子主题） */
 
 export class InlineEditor {
   constructor(store, graph) {
@@ -406,6 +406,10 @@ export class InlineEditor {
 
   startEdgeEdit(edgeId) {
     if (!edgeId) return
+    if (this.store.isHierarchyEdge?.(edgeId)) {
+      InlineEditor.showToast('层级连线由节点位置管理，不能直接编辑', true)
+      return
+    }
     this.editingEdgeId = edgeId
     this.showEdgeEditor(edgeId, { focus: true })
   }
@@ -510,6 +514,15 @@ export class InlineEditor {
     if (!fromId) return null
     if (!this.commitEdit()) return null
 
+    // 中心主题没有“同级”。与 XMind 一致，Enter 在中心主题上创建一级主题。
+    if (this.store.isRootNode?.(fromId)) {
+      const childId = this.store.addChildNode(fromId)
+      this.graph.positionNearParent(fromId, childId)
+      this.selectNode(childId)
+      this.startEdit(childId)
+      return childId
+    }
+
     const siblingId = this.store.addSiblingNode(fromId)
     const parentId = this.store.getParentId(fromId)
     if (parentId) this.graph.positionNearParent(parentId, siblingId)
@@ -520,7 +533,12 @@ export class InlineEditor {
 
   deleteSelected() {
     if (this.selectedEdgeId && !this._isInputFocused()) {
-      this.store.deleteEdge(this.selectedEdgeId)
+      try {
+        this.store.deleteEdge(this.selectedEdgeId)
+      } catch (error) {
+        InlineEditor.showToast(error.message, true)
+        return
+      }
       this.clearEdgeSelection()
       this.graph.setSelected(null)
       this.onDeselect?.()
@@ -530,7 +548,12 @@ export class InlineEditor {
     const node = this.store.getNode(this.selectedNodeId)
     if (!node) return
 
-    this.store.deleteNode(this.selectedNodeId)
+    try {
+      this.store.deleteNode(this.selectedNodeId)
+    } catch (error) {
+      InlineEditor.showToast(error.message, true)
+      return
+    }
     this.selectedNodeId = null
     this.hideOverlay()
     this.graph.setSelected(null)
@@ -540,8 +563,17 @@ export class InlineEditor {
   deleteNodeById(nodeId) {
     const node = this.store.getNode(nodeId)
     if (!node) return
+    if (this.store.isRootNode?.(nodeId)) {
+      InlineEditor.showToast('中心主题不能删除', true)
+      return
+    }
     if (!confirm(`确定删除节点「${node.label}」吗？`)) return
-    this.store.deleteNode(nodeId)
+    try {
+      this.store.deleteNode(nodeId)
+    } catch (error) {
+      InlineEditor.showToast(error.message, true)
+      return
+    }
     if (this.selectedNodeId === nodeId) {
       this.selectedNodeId = null
       this.hideOverlay()

@@ -106,6 +106,13 @@ describe('KnowledgeStore', () => {
       const edges = store._currentData().edges
       expect(edges.some((e) => e.source === 'a' || e.target === 'a')).toBe(false)
     })
+
+    it('思维导图中心节点不能删除', () => {
+      store.createGraph('技术')
+      expect(() => store.deleteNode('root')).toThrow('中心节点不能删除')
+      expect(() => store.setNodeParent('root', 'some-group')).toThrow('中心节点不能移动')
+      expect(store.getNode('root')).not.toBeNull()
+    })
   })
 
   describe('addChildNode', () => {
@@ -127,6 +134,13 @@ describe('KnowledgeStore', () => {
       // b 的父节点是 a（通过 edge_ab: a→b），同级应同样挂到 a 下
       const id = store.addSiblingNode('b')
       expect(store.getParentId(id)).toBe('a')
+    })
+
+    it('中心节点创建“同级”时实际创建一级主题', () => {
+      store.createGraph('技术')
+      const id = store.addSiblingNode('root', '一级主题')
+      expect(store.getHierarchyParentId(id)).toBe('root')
+      expect(store.getNode(id).branchSide).toBe('right')
     })
   })
 
@@ -170,6 +184,132 @@ describe('KnowledgeStore', () => {
       expect(() => store.moveNodeUnder(root, root)).toThrow('自己')
       expect(() => store.moveNodeUnder(root, grandchild)).toThrow('自己的子节点')
     })
+
+    it('中心节点不能移动，一级分支移出和移回时维护方向', () => {
+      store.createGraph('技术')
+      const first = store.addChildNode('root', 'XPath')
+      const second = store.addChildNode('root', 'Obsidian')
+
+      expect(() => store.moveNodeUnder('root', first)).toThrow('中心节点不能移动')
+      expect(store.getNode(first).branchSide).toBe('right')
+      expect(store.getNode(second).branchSide).toBe('left')
+
+      expect(store.moveNodeUnder(first, second)).toBe(true)
+      expect(store.getNode(first).branchSide).toBeUndefined()
+      expect(store.moveNodeUnder(first, 'root')).toBe(true)
+      expect(store.getNode(first).branchSide).toBe('right')
+    })
+  })
+
+  describe('思维导图中心节点与层级结构', () => {
+    it('普通关系图不会被误判为思维导图', () => {
+      expect(store.getMindMapRootId()).toBeNull()
+      expect(store.getMindMapStructure()).toBeNull()
+      expect(store.isRootNode('a')).toBe(false)
+    })
+
+    it('优先识别显式中心节点', () => {
+      const explicit = createStore({
+        graphs: [{ id: 'g1', name: 't' }],
+        dataMap: {
+          g1: {
+            nodes: [
+              { id: 'center', label: '中心', isRoot: true },
+              { id: 'other', label: '其他', important: 'yes' },
+            ],
+            edges: [],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+
+      expect(explicit.getMindMapRootId()).toBe('center')
+      expect(explicit.pickDefaultFocusNodeId()).toBe('center')
+    })
+
+    it('仅当旧层级数据覆盖所有普通节点且构成单棵树时推断根节点', () => {
+      const tree = createStore({
+        graphs: [{ id: 'g1', name: 't' }],
+        dataMap: {
+          g1: {
+            nodes: makeNodes(),
+            edges: [
+              { id: 'h1', source: 'a', target: 'b', type: '子节点', hierarchy: true },
+              { id: 'h2', source: 'a', target: 'c', type: '子节点', hierarchy: true },
+            ],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+      const partialTree = createStore({
+        graphs: [{ id: 'g1', name: 't' }],
+        dataMap: {
+          g1: {
+            nodes: makeNodes([{ id: 'd', label: 'D' }]),
+            edges: [
+              { id: 'h1', source: 'a', target: 'b', type: '子节点', hierarchy: true },
+              { id: 'h2', source: 'b', target: 'c', type: '子节点', hierarchy: true },
+            ],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+      const compoundNetwork = createStore({
+        graphs: [{ id: 'g1', name: 't' }],
+        dataMap: {
+          g1: {
+            nodes: [
+              { id: 'org', label: '组织', group: 'org' },
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+            edges: [{ id: 'h1', source: 'a', target: 'b', type: '子节点', hierarchy: true }],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+
+      expect(tree.getMindMapRootId()).toBe('a')
+      expect(partialTree.getMindMapRootId()).toBeNull()
+      expect(compoundNetwork.getMindMapRootId()).toBeNull()
+    })
+
+    it('结构只使用层级边，并为旧数据补齐稳定的左右分支', () => {
+      const mindMap = createStore({
+        graphs: [{ id: 'g1', name: 't' }],
+        dataMap: {
+          g1: {
+            mode: 'mindmap',
+            rootNodeId: 'root',
+            nodes: [
+              { id: 'root', label: '中心', isRoot: true },
+              { id: 'one', label: '分支 1' },
+              { id: 'two', label: '分支 2' },
+              { id: 'leaf', label: '子节点' },
+            ],
+            edges: [
+              { id: 'h1', source: 'root', target: 'one', type: '子节点', hierarchy: true },
+              { id: 'h2', source: 'root', target: 'two', type: '子节点', hierarchy: true },
+              { id: 'h3', source: 'one', target: 'leaf', type: '子节点', hierarchy: true },
+              { id: 'r1', source: 'two', target: 'leaf', type: '参考' },
+            ],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+
+      expect(mindMap.getMindMapStructure()).toEqual({
+        rootId: 'root',
+        parentById: { one: 'root', two: 'root', leaf: 'one' },
+        childrenById: {
+          root: ['one', 'two'],
+          one: ['leaf'],
+          two: [],
+          leaf: [],
+        },
+        branchSideById: { one: 'right', two: 'left' },
+      })
+    })
   })
 
   // === 边 ===
@@ -199,12 +339,28 @@ describe('KnowledgeStore', () => {
       store.updateEdge('edge_ab', { type: '新类型' })
       expect(store.getEdge('edge_ab').type).toBe('新类型')
     })
+
+    it('层级连线不能作为普通关系改名', () => {
+      const root = store.addChildNode(null, '根节点')
+      const child = store.addChildNode(root, '子节点')
+      const edge = store._currentData().edges.find((item) => item.target === child)
+      expect(store.isHierarchyEdge(edge.id)).toBe(true)
+      expect(() => store.updateEdge(edge.id, { type: '普通关系' })).toThrow('不能直接编辑')
+    })
   })
 
   describe('deleteEdge', () => {
     it('删除边', () => {
       store.deleteEdge('edge_ab')
       expect(store.getEdge('edge_ab')).toBeNull()
+    })
+
+    it('层级连线不能直接删除', () => {
+      const root = store.addChildNode(null, '根节点')
+      const child = store.addChildNode(root, '子节点')
+      const edge = store._currentData().edges.find((item) => item.target === child)
+      expect(() => store.deleteEdge(edge.id)).toThrow('不能直接删除')
+      expect(store.getHierarchyParentId(child)).toBe(root)
     })
   })
 
@@ -269,10 +425,33 @@ describe('KnowledgeStore', () => {
   // === 多图谱 ===
 
   describe('多图谱管理', () => {
-    it('创建新图谱', () => {
-      const id = store.createGraph('G2')
+    it('创建新图谱时自动创建以图谱名命名的中心节点', () => {
+      const id = store.createGraph('  G2  ')
       expect(store.getGraphs()).toHaveLength(2)
       expect(store.getCurrentGraphId()).toBe(id)
+      expect(store.getGraphs()[0].name).toBe('G2')
+      expect(store.getAllNodes()).toEqual([
+        { id: 'root', label: 'G2', group: '', isRoot: true },
+      ])
+      expect(store.getMindMapRootId()).toBe('root')
+      expect(store._currentData()).toMatchObject({ mode: 'mindmap', rootNodeId: 'root' })
+    })
+
+    it('新图谱名为空时使用默认名称', () => {
+      store.createGraph('   ')
+      expect(store.getGraphs()[0].name).toBe('新图谱')
+      expect(store.getNode('root').label).toBe('新图谱')
+    })
+
+    it('中心节点的一级分支按右左交替平衡', () => {
+      store.createGraph('技术')
+      const first = store.addChildNode('root', 'A')
+      const second = store.addChildNode('root', 'B')
+      const third = store.addChildNode('root', 'C')
+
+      expect(store.getNode(first).branchSide).toBe('right')
+      expect(store.getNode(second).branchSide).toBe('left')
+      expect(store.getNode(third).branchSide).toBe('right')
     })
 
     it('切换图谱', () => {
@@ -309,6 +488,7 @@ describe('KnowledgeStore', () => {
       })
       expect(store.exportData().dataMap[temporaryId]).toBeUndefined()
       expect(store.getAllNodes().map((node) => node.label)).toContain('根节点')
+      expect(store._currentData()).toMatchObject({ mode: 'mindmap', rootNodeId: 'root' })
     })
   })
 
@@ -320,6 +500,18 @@ describe('KnowledgeStore', () => {
       expect(data.graphs).toBeDefined()
       expect(data.dataMap).toBeDefined()
       expect(data.currentGraphId).toBe('g1')
+    })
+
+    it('导出和撤销不会丢失思维导图元数据', () => {
+      const graphId = store.createGraph('技术')
+      store.addChildNode('root', 'JavaScript')
+      store.undo()
+
+      expect(store._currentData()).toMatchObject({ mode: 'mindmap', rootNodeId: 'root' })
+      expect(store.exportData().dataMap[graphId]).toMatchObject({
+        mode: 'mindmap',
+        rootNodeId: 'root',
+      })
     })
 
     it('导入后数据一致', () => {
@@ -458,6 +650,25 @@ describe('KnowledgeStore', () => {
       const node = elems.find((e) => e.data.id === 'n1')
       expect(node.data.group).toBe('')
       expect(node.data.gender).toBe('')
+      expect(node.data.isRoot).toBe('no')
+      expect(node.data.mindMap).toBe('no')
+    })
+
+    it('toCytoscapeElements 应暴露思维导图中心、分支方向和层级边元数据', () => {
+      store.createGraph('技术')
+      const childId = store.addChildNode('root', 'XPath')
+      store.addEdge({ source: childId, target: 'root', type: '参考' })
+
+      const elems = store.toCytoscapeElements()
+      const root = elems.find((element) => element.data.id === 'root')
+      const child = elems.find((element) => element.data.id === childId)
+      const hierarchyEdge = elems.find((element) => element.data.target === childId)
+      const relationEdge = elems.find((element) => element.data.source === childId && element.data.target === 'root')
+
+      expect(root.data).toMatchObject({ isRoot: 'yes', mindMap: 'yes', branchSide: '' })
+      expect(child.data).toMatchObject({ isRoot: 'no', mindMap: 'yes', branchSide: 'right' })
+      expect(hierarchyEdge.data.hierarchy).toBe('yes')
+      expect(relationEdge.data.hierarchy).toBe('no')
     })
 
     it('toCytoscapeElements 边无 type 时应为空字符串', () => {

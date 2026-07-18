@@ -7,6 +7,10 @@ import {
 
 const AGG_PREFIX = '__agg__'
 
+function isHierarchyEdge(edge) {
+  return edge?.hierarchy === true || edge?.hierarchy === 'yes' || edge?.type === '子节点'
+}
+
 /** 聚合节点 ID */
 export function makeAggregateId(parentId, tag) {
   return `${AGG_PREFIX}${parentId}::${tag}`
@@ -31,7 +35,11 @@ export function computeVisibility({ nodes, edges }, viewState) {
   const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]))
 
   const activeCats = new Set(viewState.activeCategories ?? [])
-  let filteredEdges = enrichedEdges.filter((e) => activeCats.has(e.category))
+  // 层级边是思维导图的结构骨架，不是可筛选的业务关系。
+  // 即使用户关闭了“其他”等关系分类，子节点仍应可见。
+  let filteredEdges = enrichedEdges.filter(
+    (e) => isHierarchyEdge(e) || activeCats.has(e.category)
+  )
 
   const timelineOn = viewState.timelineEnabled && viewState.timelineMax != null
   const { allowedNodes: timelineNodes, edges: timelineEdges } = applyTimelineFilter(

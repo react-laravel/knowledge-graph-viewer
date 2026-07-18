@@ -70,11 +70,10 @@ test('新图谱新增节点后应自动保存并在刷新后恢复', async ({ pa
   page.once('dialog', async (dialog) => dialog.accept('技术'))
   await page.click('#btn-new-graph')
   await expect(page.locator('#graph-select')).toHaveValue('2')
+  await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(1)
 
   await page.keyboard.press('Tab')
   const editor = page.locator('.node-editor.editing textarea')
-  await editor.fill('技术')
-  await editor.press('Tab')
   await editor.fill('新节点我')
   await page.locator('#sidebar').click({ position: { x: 20, y: 20 } })
 

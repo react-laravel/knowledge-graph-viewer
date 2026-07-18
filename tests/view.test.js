@@ -47,6 +47,26 @@ describe('viewController', () => {
     expect(visibleNodeIds.has('c')).toBe(false)
   })
 
+  it('层级边不受关系分类筛选影响', () => {
+    const hierarchyEdges = [
+      { id: 'h1', source: 'a', target: 'b', type: '子节点', hierarchy: true },
+    ]
+    const state = createDefaultViewState({
+      viewMode: 'focus',
+      focusNodeId: 'a',
+      focusDepth: 1,
+      activeCategories: [],
+    })
+
+    const { visibleNodeIds, visibleEdgeIds } = computeVisibility(
+      { nodes, edges: hierarchyEdges },
+      state
+    )
+
+    expect(visibleNodeIds.has('b')).toBe(true)
+    expect(visibleEdgeIds.has('h1')).toBe(true)
+  })
+
   it('聚合节点 ID 可解析', () => {
     const id = makeAggregateId('org', '侍女')
     expect(id).toContain('侍女')
@@ -157,6 +177,67 @@ describe('viewController', () => {
 })
 
 describe('ViewManager 视图模式', () => {
+  it('重置思维导图时默认显示全部节点', () => {
+    const store = {
+      getCurrentGraphId: () => 'mindmap',
+      getMindMapRootId: () => 'root',
+      pickDefaultFocusNodeId: () => 'root',
+    }
+    const manager = new ViewManager(store, null)
+
+    manager.resetForGraph('mindmap')
+
+    expect(manager.getState().viewMode).toBe('full')
+    expect(manager.getState().focusNodeId).toBe('root')
+  })
+
+  it('重置普通关系图时仍使用中心展开', () => {
+    const store = {
+      getCurrentGraphId: () => 'network',
+      getMindMapRootId: () => null,
+      pickDefaultFocusNodeId: () => 'a',
+    }
+    const manager = new ViewManager(store, null)
+
+    manager.resetForGraph('network')
+
+    expect(manager.getState().viewMode).toBe('focus')
+    expect(manager.getState().focusNodeId).toBe('a')
+  })
+
+  it('思维导图即时布局后按可见节点重新适配画布', () => {
+    const data = {
+      mode: 'mindmap',
+      rootNodeId: 'root',
+      nodes: [{ id: 'root', label: '中心', isRoot: true }],
+      edges: [],
+    }
+    const structure = { rootId: 'root', parentById: {}, childrenById: { root: [] } }
+    const calls = []
+    const store = {
+      getCurrentGraphId: () => 'mindmap',
+      exportData: () => ({ dataMap: { mindmap: data } }),
+      pickDefaultFocusNodeId: () => 'root',
+      getMindMapStructure: () => structure,
+      toCytoscapeElements: () => [],
+    }
+    const graph = {
+      sync: (_elements, options) => calls.push(['sync', options]),
+      applyVisibility: (nodeIds) => calls.push(['visibility', nodeIds]),
+      setShowEdgeLabels: () => {},
+      fitToVisibleNodes: (nodeIds) => calls.push(['fit', nodeIds]),
+    }
+    const manager = new ViewManager(store, graph)
+    manager.state = createDefaultViewState({ viewMode: 'full', focusNodeId: 'root' })
+
+    manager.applyView({ layout: true })
+
+    expect(calls[0]).toEqual(['sync', { layout: true, applyVisibility: false }])
+    expect(calls.some(([name]) => name === 'fit')).toBe(true)
+    expect(calls.findIndex(([name]) => name === 'fit'))
+      .toBeGreaterThan(calls.findIndex(([name]) => name === 'visibility'))
+  })
+
   it('点击节点更新焦点时不应从显示全部切换到中心展开', () => {
     const manager = new ViewManager(null, null)
     manager.state = createDefaultViewState({ viewMode: 'full', focusNodeId: 'a' })

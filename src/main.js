@@ -75,6 +75,7 @@ export class App {
           this.graphList.map((g) => [
             String(g.id),
             {
+              ...(g.data ?? {}),
               nodes: (g.data?.nodes ?? []).map((n) => ({ ...n })),
               edges: (g.data?.edges ?? []).map((e) => ({ ...e })),
             },
