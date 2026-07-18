@@ -106,16 +106,20 @@ export class InlineEditor {
 
       if (e.key === 'Tab') {
         e.preventDefault()
-        this.createChild()
+        this.graph.cancelPendingSelection?.()
+        this.createChild(this.editingNodeId || this.selectedNodeId)
         return
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        if (this.commitEdit()) this.createSibling()
+        this.graph.cancelPendingSelection?.()
+        const fromId = this.editingNodeId || this.selectedNodeId
+        if (this.commitEdit()) this.createSibling(fromId)
         return
       }
       if (e.key === 'Escape') {
         e.preventDefault()
+        this.graph.cancelPendingSelection?.()
         this.nodeInput.value = this.editStartLabel
         this._resetTextHistory(this.editStartLabel)
         this.stopEdit()
@@ -134,10 +138,8 @@ export class InlineEditor {
       if (this.isComposing) return
       if (this.moveModeActive && e.key !== 'Escape') return
 
-      const selectionShortcut = ['Tab', 'Enter', 'F2', 'Delete', 'Backspace', 'l', 'L'].includes(e.key)
-      if (selectionShortcut && !this._isInputFocused()) {
-        this.graph.flushPendingSelection?.()
-      }
+      const selectionShortcut = ['Tab', 'Enter', 'F2', 'Delete', 'Backspace', 'l', 'L', 'Escape'].includes(e.key)
+      if (selectionShortcut) this.graph.cancelPendingSelection?.()
 
       if (this._isUndoShortcut(e)) {
         if (this._isInputFocused() && this.editingNodeId) return
@@ -182,7 +184,7 @@ export class InlineEditor {
             this.createChild(nodes[0].id)
           }
         } else {
-          this.createChild()
+          this.createChild(this.graph.getSelectedNodeId?.() || this.selectedNodeId)
         }
         return
       }
@@ -509,6 +511,7 @@ export class InlineEditor {
     if (!this.commitEdit()) return null
 
     const childId = this.store.addChildNode(fromId)
+    this.onNodeCreated?.(childId, fromId)
     this.graph.positionNearParent(fromId, childId)
     this.selectNode(childId)
     this.startEdit(childId)
@@ -522,6 +525,7 @@ export class InlineEditor {
     // 中心主题没有“同级”。与 XMind 一致，Enter 在中心主题上创建一级主题。
     if (this.store.isRootNode?.(fromId)) {
       const childId = this.store.addChildNode(fromId)
+      this.onNodeCreated?.(childId, fromId)
       this.graph.positionNearParent(fromId, childId)
       this.selectNode(childId)
       this.startEdit(childId)
@@ -530,6 +534,7 @@ export class InlineEditor {
 
     const siblingId = this.store.addSiblingNode(fromId)
     const parentId = this.store.getParentId(fromId)
+    this.onNodeCreated?.(siblingId, parentId)
     if (parentId) this.graph.positionNearParent(parentId, siblingId)
     this.selectNode(siblingId)
     this.startEdit(siblingId)

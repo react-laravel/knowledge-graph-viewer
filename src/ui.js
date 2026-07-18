@@ -1183,6 +1183,30 @@ export class SidebarPanel {
     this._syncSelectionUi()
   }
 
+  /**
+   * pointer tap 阶段只立即同步普通选择；渐进展开、移动、关联和聚合等
+   * 单击专属动作仍由 onetap 后的 onSelect 执行，双击只进入编辑。
+   */
+  onPreviewSelect(selection) {
+    if (!selection) {
+      this.onSelect(null)
+      return true
+    }
+    if (this.moveSourceId || this.editor.linkSourceId || selection.shiftKey) return false
+    if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) return false
+
+    if (selection.type === 'node') {
+      const selected = this.editor.onNodeSelect(selection.id)
+      if (!selected) return false
+      this.currentSelection = selection
+    } else {
+      this.editor.onEdgeSelect(selection.id)
+      this.currentSelection = selection
+    }
+    this._syncSelectionUi()
+    return true
+  }
+
   /** 双击只执行显式编辑，不再附带聚焦或累加展开。 */
   onActivate(selection) {
     if (!selection) return

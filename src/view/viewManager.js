@@ -169,6 +169,26 @@ export class ViewManager {
     this.applyView()
   }
 
+  /**
+   * 用户显式创建的节点必须立即可见。中心展开/渐进展开模式下只展开它的
+   * 父分支，不改变当前中心、视图模式或全局展开深度。
+   */
+  revealCreatedNode(nodeId, parentId = null) {
+    if (!nodeId || this.state.viewMode === 'full') return false
+
+    const graphId = this.store.getCurrentGraphId()
+    const data = this.store.exportData().dataMap[graphId] ?? { nodes: [], edges: [] }
+    const { visibleNodeIds } = computeVisibility(data, this.state)
+    if (visibleNodeIds.has(nodeId)) return false
+
+    const expansionId = parentId || nodeId
+    if (!this.state.expandedNodeIds.includes(expansionId)) {
+      this.state.expandedNodeIds.push(expansionId)
+    }
+    this.applyView()
+    return true
+  }
+
   toggleCategory(categoryId) {
     const set = new Set(this.state.activeCategories)
     if (set.has(categoryId)) set.delete(categoryId)

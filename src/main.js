@@ -28,6 +28,7 @@ export class App {
     const cyContainer = document.getElementById('cy')
     this.graph = new GraphManager(cyContainer, {
       onSelect: (selection) => this.ui?.onSelect(selection),
+      onPreviewSelect: (selection) => this.ui?.onPreviewSelect(selection),
       onActivate: (selection) => this.ui?.onActivate(selection),
       themeMode: initialTheme,
     })
@@ -42,6 +43,9 @@ export class App {
     this.detailPanel.renderEmpty()
 
     this.editor = new InlineEditor(this.store, this.graph)
+    this.editor.onNodeCreated = (nodeId, parentId) => {
+      this.viewManager.revealCreatedNode(nodeId, parentId)
+    }
 
     this.ui = new SidebarPanel(this.store, this.graph, this.editor, this.viewManager, this.detailPanel)
 

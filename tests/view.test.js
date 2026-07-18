@@ -259,4 +259,41 @@ describe('ViewManager 视图模式', () => {
     expect(manager.getState().viewMode).toBe('focus')
     expect(manager.getState().expandedNodeIds).toContain('b')
   })
+
+  it('中心展开模式创建二级节点时只展开父分支', () => {
+    const data = {
+      nodes: [
+        { id: 'root', label: '技术', isRoot: true },
+        { id: 'ai', label: 'AI' },
+        { id: 'child', label: '新节点' },
+      ],
+      edges: [
+        { id: 'e1', source: 'root', target: 'ai', type: '子节点', hierarchy: true },
+        { id: 'e2', source: 'ai', target: 'child', type: '子节点', hierarchy: true },
+      ],
+    }
+    const store = {
+      getCurrentGraphId: () => 'mindmap',
+      exportData: () => ({ dataMap: { mindmap: data } }),
+    }
+    const manager = new ViewManager(store, null)
+    manager.state = createDefaultViewState({
+      viewMode: 'focus',
+      focusNodeId: 'root',
+      focusDepth: 1,
+    })
+    let applyCount = 0
+    manager.applyView = () => { applyCount += 1 }
+
+    expect(computeVisibility(data, manager.getState()).visibleNodeIds.has('child')).toBe(false)
+    expect(manager.revealCreatedNode('child', 'ai')).toBe(true)
+
+    const state = manager.getState()
+    expect(state.viewMode).toBe('focus')
+    expect(state.focusNodeId).toBe('root')
+    expect(state.focusDepth).toBe(1)
+    expect(state.expandedNodeIds).toContain('ai')
+    expect(computeVisibility(data, state).visibleNodeIds.has('child')).toBe(true)
+    expect(applyCount).toBe(1)
+  })
 })

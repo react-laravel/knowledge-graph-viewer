@@ -231,7 +231,11 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#btn-cancel-move')).toBeVisible()
     await expect(page.locator('#node-action-label')).toContainText('新父节点')
 
-    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), targetId)
+    await page.evaluate((id) => {
+      const node = window.cy?.getElementById(id)
+      node?.emit('tap')
+      node?.emit('onetap')
+    }, targetId)
     await expect
       .poll(() =>
         page.evaluate(
@@ -503,13 +507,24 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
     const aiId = await page.evaluate(() => window.cy?.nodes('.node-editing').first().id() || '')
     expect(aiId).not.toBe('')
+    await selectViewMode(page, 'focus')
+    await expect(page.locator('#val-focus-node')).toHaveText('技术')
+    await expect(page.locator('#val-focus-depth')).toHaveText('1')
     const existingNodeIds = await page.evaluate(() => window.cy?.nodes().map((node) => node.id()) ?? [])
 
-    // 真实交互里用户会先单击 AI 再立刻按 Tab。单击选择有短暂的双击判定延迟，
-    // 快捷键仍必须使用刚点击的节点，不能继续沿用旧的中心主题。
-    await page.locator('#cy').focus()
+    // 真实交互里用户会先单击 AI 再立刻按 Tab。单击专属副作用仍需等待
+    // onetap 判定，但当前节点必须立即同步，不能继续沿用旧的中心主题。
     await page.evaluate(() => window.kgStore.selectAndFocus('root'))
-    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), aiId)
+    const aiPoint = await page.evaluate((id) => {
+      const pane = document.getElementById('cy')?.getBoundingClientRect()
+      const position = window.cy?.getElementById(id).renderedPosition()
+      return pane && position
+        ? { x: pane.left + position.x, y: pane.top + position.y }
+        : null
+    }, aiId)
+    expect(aiPoint).not.toBeNull()
+    if (!aiPoint) throw new Error('AI 节点坐标不可用')
+    await page.mouse.click(aiPoint.x, aiPoint.y)
     await page.keyboard.press('Tab')
     await expect(editor).toBeFocused()
     await expect(editor).toHaveValue('新节点')
@@ -540,11 +555,15 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
       return hierarchyEdge?.nonempty()
         && editorAligned
+        && !child.hasClass('kg-hidden')
         && Math.sign(childOffset) === Math.sign(parentOffset)
         && Math.abs(childOffset) > Math.abs(parentOffset) + 100
         && Math.hypot(childPos.x - rootPos.x, childPos.y - rootPos.y) > 150
         && Math.hypot(childPos.x - parentPos.x, childPos.y - parentPos.y) > 100
     }, { aiId, existingNodeIds })).toBe(true)
+    await expect(page.locator('#view-mode-select')).toHaveValue('focus')
+    await expect(page.locator('#val-focus-node')).toHaveText('技术')
+    await expect(page.locator('#val-focus-depth')).toHaveText('1')
   })
 
   test('思维导图中心主题不能通过删除键或空格拖拽移动', async ({ page }) => {

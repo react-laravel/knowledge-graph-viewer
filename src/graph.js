@@ -19,7 +19,6 @@ const DEFAULT_LAYOUT_OPTIONS = {
   numIter: 2500,
 }
 
-const TAP_DELAY_MS = 220
 const MIND_MAP_ROOT_GAP = 230
 const MIND_MAP_LEVEL_GAP = 190
 const MIND_MAP_ROW_GAP = 96
@@ -30,9 +29,9 @@ export class GraphManager {
     this.spacePressed = false
     this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS }
     this._onSelect = options.onSelect
+    this._onPreviewSelect = options.onPreviewSelect
     this._onActivate = options.onActivate
-    this._pendingTapTimer = null
-    this._pendingSelection = null
+    this._pendingSingleTap = null
     this._showEdgeLabels = false
     this._hoverHighlight = true
     this._themeMode = options.themeMode === 'dark' ? 'dark' : 'light'
@@ -408,18 +407,30 @@ export class GraphManager {
       const selection = this._selectionFromEvent(evt)
       if (!selection) {
         this._cancelPendingTap()
-        if (evt.target === this.cy) this._onSelect?.(null)
+        if (evt.target === this.cy) {
+          this._pendingSingleTap = { selection: null }
+          this._onPreviewSelect?.(null)
+        }
         return
       }
 
-      // Cytoscape 会在 dbltap 前先触发两次 tap。稍后派发单击，避免双击编辑时
-      // 又触发聚焦或渐进展开。
-      this._cancelPendingTap()
-      this._pendingSelection = selection
-      this._pendingTapTimer = setTimeout(() => {
-        this._pendingTapTimer = null
-        this.flushPendingSelection()
-      }, TAP_DELAY_MS)
+      // tap 立即同步纯选择，保证紧接着的 Tab/Enter 使用刚点击的节点。
+      // 渐进展开、移动、关联、聚合等单击副作用交给 Cytoscape 的 onetap，
+      // 它会自动排除双击，不再维护自定义延迟定时器。
+      this._pendingSingleTap = { selection }
+      this._onPreviewSelect?.(selection)
+    })
+
+    this.cy.on('onetap', (evt) => {
+      const pending = this._pendingSingleTap
+      this._pendingSingleTap = null
+      if (!pending) return
+
+      const selection = this._selectionFromEvent(evt)
+      const pendingSelection = pending.selection
+      if ((selection?.type ?? null) !== (pendingSelection?.type ?? null)) return
+      if ((selection?.id ?? null) !== (pendingSelection?.id ?? null)) return
+      this._onSelect?.(selection)
     })
 
     this.cy.on('dbltap', (evt) => {
@@ -430,27 +441,7 @@ export class GraphManager {
   }
 
   _cancelPendingTap() {
-    if (this._pendingTapTimer) {
-      clearTimeout(this._pendingTapTimer)
-      this._pendingTapTimer = null
-    }
-    this._pendingSelection = null
-  }
-
-  /**
-   * 节点单击会短暂等待双击判定。紧跟单击的快捷键必须先采用这次选择，
-   * 否则 Tab/Enter/Delete 等操作会错误作用于上一个节点。
-   */
-  flushPendingSelection() {
-    if (!this._pendingSelection) return false
-    if (this._pendingTapTimer) {
-      clearTimeout(this._pendingTapTimer)
-      this._pendingTapTimer = null
-    }
-    const selection = this._pendingSelection
-    this._pendingSelection = null
-    this._onSelect?.(selection)
-    return true
+    this._pendingSingleTap = null
   }
 
   cancelPendingSelection() {
@@ -739,6 +730,11 @@ export class GraphManager {
     if (id) this.cy.getElementById(id).addClass('selected')
     // 注意：不触发 _onSelect，避免和 onCanvasDeselect 形成循环调用
     // 选中同步由 Cytoscape tap 事件处理
+  }
+
+  getSelectedNodeId() {
+    const selected = this.cy.nodes('.selected')
+    return selected.length === 1 ? selected.id() : null
   }
 
   setNodeEditing(nodeId, editing) {
