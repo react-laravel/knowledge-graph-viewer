@@ -33,27 +33,15 @@ export class SidebarPanel {
 
   _initTabs() {
     const tabs = document.querySelectorAll('.tab')
+    const panels = document.querySelectorAll('.tab-panel')
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
-        this.activateTab(tab.dataset.tab)
+        tabs.forEach((t) => t.classList.remove('active'))
+        panels.forEach((p) => p.classList.remove('active'))
+        tab.classList.add('active')
+        document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active')
       })
     })
-  }
-
-  activateTab(tabName) {
-    const tab = document.querySelector(`.tab[data-tab="${tabName}"]`)
-    const panel = document.getElementById(`panel-${tabName}`)
-    if (!tab || !panel) return
-
-    document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'))
-    document.querySelectorAll('.tab-panel').forEach((item) => item.classList.remove('active'))
-    tab.classList.add('active')
-    panel.classList.add('active')
-  }
-
-  showViewControls() {
-    this.activateTab('view')
-    this._syncViewControls()
   }
 
   // === 搜索 ===
@@ -295,6 +283,9 @@ export class SidebarPanel {
 
   _syncViewControls() {
     const st = this.viewManager.getState()
+    const showRedChamberFeatures = this._isRedChamberExample()
+    document.getElementById('relation-filter-section')?.classList.toggle('hidden', !showRedChamberFeatures)
+    document.getElementById('timeline-section')?.classList.toggle('hidden', !showRedChamberFeatures)
     document.querySelectorAll('input[name="view-mode"]').forEach((r) => {
       r.checked = r.value === st.viewMode
     })
@@ -308,6 +299,12 @@ export class SidebarPanel {
     if (optHover) optHover.checked = st.hoverHighlight
     this._syncTimelineControl(st)
     this._syncFocusCenter()
+  }
+
+  _isRedChamberExample() {
+    if (!this.viewManager.getTimelineRange().hasData) return false
+    const nodeIds = new Set(this.store.getAllNodes().map((node) => node.id))
+    return ['贾宝玉', '林黛玉', '薛宝钗', '王熙凤'].filter((id) => nodeIds.has(id)).length >= 3
   }
 
   _syncTimelineControl(st = this.viewManager.getState()) {

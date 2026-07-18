@@ -78,27 +78,31 @@
             </div>
           </div>
 
-          <h3 class="section-title">关系筛选</h3>
-          <div id="category-filters" class="filter-grid"></div>
+          <div id="relation-filter-section">
+            <h3 class="section-title">关系筛选</h3>
+            <div id="category-filters" class="filter-grid"></div>
+          </div>
 
           <h3 class="section-title">显示选项</h3>
           <label class="check-row"><input type="checkbox" id="opt-edge-labels" /> 显示连线文字</label>
           <label class="check-row"><input type="checkbox" id="opt-hover" checked /> Hover 高亮相邻</label>
           <label class="check-row"><input type="checkbox" id="opt-night-mode" /> 夜晚模式</label>
 
-          <h3 class="section-title">时间轴</h3>
-          <label class="check-row"><input type="checkbox" id="opt-timeline" /> 按时间/章节过滤</label>
-          <div id="timeline-wrap" class="timeline-wrap hidden">
-            <div class="chapter-stepper-row">
-              <span class="timeline-label">截至第</span>
-              <div class="chapter-stepper">
-                <button type="button" id="timeline-dec" class="btn-icon stepper-btn" aria-label="上一回">−</button>
-                <input type="number" id="timeline-input" class="chapter-input" min="1" max="120" step="1" value="1" inputmode="numeric" />
-                <button type="button" id="timeline-inc" class="btn-icon stepper-btn" aria-label="下一回">+</button>
+          <div id="timeline-section">
+            <h3 class="section-title">时间轴</h3>
+            <label class="check-row"><input type="checkbox" id="opt-timeline" /> 按时间/章节过滤</label>
+            <div id="timeline-wrap" class="timeline-wrap hidden">
+              <div class="chapter-stepper-row">
+                <span class="timeline-label">截至第</span>
+                <div class="chapter-stepper">
+                  <button type="button" id="timeline-dec" class="btn-icon stepper-btn" aria-label="上一回">−</button>
+                  <input type="number" id="timeline-input" class="chapter-input" min="1" max="120" step="1" value="1" inputmode="numeric" />
+                  <button type="button" id="timeline-inc" class="btn-icon stepper-btn" aria-label="下一回">+</button>
+                </div>
+                <span class="timeline-unit">回</span>
               </div>
-              <span class="timeline-unit">回</span>
+              <p class="hint">节点/边可设置 chapter、time 或 appearAt 字段</p>
             </div>
-            <p class="hint">节点/边可设置 chapter、time 或 appearAt 字段</p>
           </div>
 
           <h3 class="section-title">聚合</h3>

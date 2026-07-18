@@ -114,14 +114,14 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('新图谱中编辑节点时按 Tab 应该创建子节点并继续输入', async ({ page }) => {
-    // 即使从其它页签新建图谱，也应自动回到包含关系筛选和时间轴的视图页。
+    // 关系筛选和时间轴只属于带章节数据的《红楼梦》示例。
+    await expect(page.locator('#relation-filter-section')).toBeVisible()
+    await expect(page.locator('#timeline-section')).toBeVisible()
     await page.click('.tab[data-tab="tree"]')
     page.once('dialog', async (dialog) => dialog.accept('技术'))
     await page.click('#btn-new-graph')
-    await expect(page.locator('.tab[data-tab="view"]')).toHaveClass(/active/)
-    await expect(page.locator('#panel-view')).toHaveClass(/active/)
-    await expect(page.locator('#category-filters [data-category]')).toHaveCount(9)
-    await expect(page.locator('#opt-timeline')).toBeVisible()
+    await expect(page.locator('#relation-filter-section')).toHaveClass(/hidden/)
+    await expect(page.locator('#timeline-section')).toHaveClass(/hidden/)
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.id || ''))
       .not.toBe('btn-new-graph')
