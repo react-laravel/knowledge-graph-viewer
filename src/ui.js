@@ -17,10 +17,12 @@ export class SidebarPanel {
     this._treeAllExpanded = true
     this._treeFirstRender = true
     this._treeClickTimer = null
+    this.moveSourceId = null
 
     this._initTabs()
     this._initSearch()
     this._initButtons()
+    this._initNodeActions()
     this._initViewControls()
     this._initStoreListener()
     this._initTree()
@@ -28,6 +30,7 @@ export class SidebarPanel {
     this._updateButtonStates()
 
     this.editor.onDeselect = () => this.onSelect(null)
+    this.editor.onLinkModeStart = () => this.cancelMoveMode()
   }
 
   // === Tab 切换 ===
@@ -114,6 +117,101 @@ export class SidebarPanel {
     })
 
     this._initLayoutConfig()
+  }
+
+  _initNodeActions() {
+    this.nodeActionBar = document.getElementById('node-action-bar')
+    this.nodeActionLabel = document.getElementById('node-action-label')
+    this.moveNodeButton = document.getElementById('btn-move-node')
+    this.cancelMoveButton = document.getElementById('btn-cancel-move')
+    if (!this.nodeActionBar || !this.moveNodeButton || !this.cancelMoveButton) return
+
+    this.moveNodeButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      this.startMoveMode()
+    })
+    this.cancelMoveButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      this.cancelMoveMode({ toast: true })
+    })
+    this.nodeActionBar.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !this.moveSourceId) return
+      event.preventDefault()
+      this.cancelMoveMode({ toast: true })
+    })
+    this._updateNodeActionBar()
+  }
+
+  startMoveMode() {
+    const nodeId = this.currentSelection?.type === 'node' ? this.currentSelection.id : null
+    const node = nodeId ? this.store.getNode(nodeId) : null
+    if (!node || node.group === 'org') {
+      SidebarPanel.showToast('请先选择一个普通节点', true)
+      return
+    }
+    if (this.editor.editingNodeId && !this.editor.commitEdit()) return
+
+    this.editor.cancelLinkMode()
+    this.moveSourceId = nodeId
+    this.editor.setMoveModeActive(true)
+    this.graph.setMoveSource(nodeId)
+    this.graph.setSelected(nodeId)
+    this.graph.container.classList.add('move-mode')
+    this._updateNodeActionBar()
+    SidebarPanel.showToast(`请选择「${node.label}」的新父节点`)
+  }
+
+  cancelMoveMode({ toast = false } = {}) {
+    if (!this.moveSourceId) return
+    this.moveSourceId = null
+    this.editor.setMoveModeActive(false)
+    this.graph.clearMoveSource()
+    this.graph.container.classList.remove('move-mode')
+    this._updateNodeActionBar()
+    if (toast) SidebarPanel.showToast('已取消移动')
+  }
+
+  _completeMove(targetId) {
+    const sourceId = this.moveSourceId
+    if (!sourceId) return false
+    const source = this.store.getNode(sourceId)
+    const target = this.store.getNode(targetId)
+    if (!source || !target) {
+      this.cancelMoveMode()
+      return false
+    }
+
+    try {
+      const changed = this.store.moveNodeUnder(sourceId, targetId)
+      this.cancelMoveMode()
+      if (changed) this.graph.positionNearParent(targetId, sourceId)
+      this.currentSelection = { type: 'node', id: sourceId }
+      this.editor.selectNode(sourceId)
+      this.graph.setSelected(sourceId)
+      this._syncSelectionUi()
+      SidebarPanel.showToast(
+        changed ? `已将「${source.label}」移动到「${target.label}」下面` : '节点已经在该位置'
+      )
+      return true
+    } catch (error) {
+      SidebarPanel.showToast(error.message, true)
+      return false
+    }
+  }
+
+  _updateNodeActionBar() {
+    if (!this.nodeActionBar) return
+    const nodeId = this.moveSourceId ?? (this.currentSelection?.type === 'node' ? this.currentSelection.id : null)
+    const node = nodeId ? this.store.getNode(nodeId) : null
+    const show = !!node && node.group !== 'org'
+    this.nodeActionBar.classList.toggle('hidden', !show)
+    if (!show) return
+
+    const moving = !!this.moveSourceId
+    this.nodeActionBar.classList.toggle('moving', moving)
+    this.nodeActionLabel.textContent = moving ? `请选择「${node.label}」的新父节点` : `已选：${node.label}`
+    this.moveNodeButton.hidden = moving
+    this.cancelMoveButton.hidden = !moving
   }
 
   _initViewControls() {
@@ -406,6 +504,7 @@ export class SidebarPanel {
 
   _initStoreListener() {
     this.store.subscribe(() => {
+      if (this.moveSourceId && !this.store.getNode(this.moveSourceId)) this.cancelMoveMode()
       if (this.searchQuery.trim()) {
         const { nodeIds, edgeIds } = this.store.search(this.searchQuery)
         this.graph.setHighlight([...nodeIds, ...edgeIds])
@@ -623,12 +722,14 @@ export class SidebarPanel {
 
   /** 进入页面时与图上默认焦点保持一致 */
   syncInitialSelection() {
+    this.cancelMoveMode()
     const st = this.viewManager?.getState()
     if (!st?.focusNodeId || st.viewMode === 'full') return
     this.currentSelection = { type: 'node', id: st.focusNodeId }
     this.editor.selectNode(st.focusNodeId)
     this.detailPanel?.update(this.currentSelection, this.store)
     this._updateTreeSelection()
+    this._updateNodeActionBar()
   }
 
   onSelect(selection) {
@@ -636,11 +737,22 @@ export class SidebarPanel {
       clearTimeout(this._treeClickTimer)
       this._treeClickTimer = null
       this.graph.cancelPendingSelection?.()
+      this.cancelMoveMode()
       this.currentSelection = null
       this.editor.deselect()
       this.detailPanel?.renderEmpty()
       this._updateButtonStates()
       this._updateTreeSelection()
+      this._updateNodeActionBar()
+      return
+    }
+
+    if (this.moveSourceId) {
+      if (selection.type === 'node' && !this.viewManager?.isAggregateNode(selection.id)) {
+        this._completeMove(selection.id)
+      } else {
+        SidebarPanel.showToast('请选择一个普通节点作为新父节点', true)
+      }
       return
     }
     if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) {
@@ -667,6 +779,14 @@ export class SidebarPanel {
   /** 双击只执行显式编辑，不再附带聚焦或累加展开。 */
   onActivate(selection) {
     if (!selection) return
+    if (this.moveSourceId) {
+      if (selection.type === 'node' && !this.viewManager?.isAggregateNode(selection.id)) {
+        this._completeMove(selection.id)
+      } else {
+        SidebarPanel.showToast('请选择一个普通节点作为新父节点', true)
+      }
+      return
+    }
     if (selection.type === 'node' && this.viewManager?.isAggregateNode(selection.id)) {
       this.viewManager.expandAggregate(selection.id)
       return
@@ -710,6 +830,7 @@ export class SidebarPanel {
     else this.detailPanel?.renderEmpty()
     this._updateButtonStates()
     this._updateTreeSelection()
+    this._updateNodeActionBar()
   }
 
   _updateTreeSelection() {

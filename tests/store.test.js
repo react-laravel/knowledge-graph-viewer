@@ -146,6 +146,32 @@ describe('KnowledgeStore', () => {
     })
   })
 
+  describe('moveNodeUnder', () => {
+    it('移动已有节点时只替换层级父节点，并支持撤销', () => {
+      const root = store.addChildNode(null, '根节点')
+      const firstParent = store.addChildNode(root, '原父节点')
+      const nextParent = store.addChildNode(root, '新父节点')
+      const child = store.addChildNode(firstParent, '待移动')
+      store.addEdge({ source: firstParent, target: nextParent, type: '业务关系' })
+
+      expect(store.moveNodeUnder(child, nextParent)).toBe(true)
+      expect(store.getHierarchyParentId(child)).toBe(nextParent)
+      expect(store._currentData().edges.some((edge) => edge.type === '业务关系')).toBe(true)
+
+      store.undo()
+      expect(store.getHierarchyParentId(child)).toBe(firstParent)
+    })
+
+    it('禁止移动到自己或自己的层级子节点下面', () => {
+      const root = store.addChildNode(null, '根节点')
+      const child = store.addChildNode(root, '子节点')
+      const grandchild = store.addChildNode(child, '孙节点')
+
+      expect(() => store.moveNodeUnder(root, root)).toThrow('自己')
+      expect(() => store.moveNodeUnder(root, grandchild)).toThrow('自己的子节点')
+    })
+  })
+
   // === 边 ===
 
   describe('addEdge', () => {

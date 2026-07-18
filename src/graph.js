@@ -347,7 +347,10 @@ export class GraphManager {
     this.container.classList.add('space-panning')
 
     document.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return
+      if (
+        ['INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'A'].includes(e.target.tagName) ||
+        e.target.isContentEditable
+      ) return
       if (e.key === ' ' && !this.spacePressed) {
         e.preventDefault()
         this.spacePressed = true
@@ -569,6 +572,15 @@ export class GraphManager {
 
   clearLinkSource() {
     this.cy.nodes().removeClass('link-source')
+  }
+
+  setMoveSource(nodeId) {
+    this.cy.nodes().removeClass('move-source')
+    if (nodeId) this.cy.getElementById(nodeId).addClass('move-source')
+  }
+
+  clearMoveSource() {
+    this.cy.nodes().removeClass('move-source')
   }
 
   showRelated(nodeId) {
@@ -913,6 +925,10 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
     style: { 'border-width': 2, 'border-color': '#9b59b6' },
   },
   {
+    selector: 'node.move-source',
+    style: { 'border-width': 3, 'border-color': '#f39c12' },
+  },
+  {
     selector: 'node.node-editing',
     style: { 'text-opacity': 0 },
   },
@@ -1010,6 +1026,10 @@ function buildStyles(showEdgeLabels, themeMode = 'light') {
       {
         selector: 'node.link-source',
         style: { 'border-color': '#c6a4ff' },
+      },
+      {
+        selector: 'node.move-source',
+        style: { 'border-color': '#ffc45c' },
       }
     )
   }

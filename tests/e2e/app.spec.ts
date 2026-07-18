@@ -144,6 +144,67 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(savedLink.locator('[data-open-link]')).toHaveAttribute('href', 'https://example.com/reference')
   })
 
+  test('桌面端应该能通过移动模式把已有节点移动到目标节点下', async ({ page }) => {
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.locator('input[name="view-mode"][value="full"]').check()
+    const sourceId = '贾母'
+    const targetId = '刘姥姥'
+
+    const clickNode = async (nodeId) => {
+      const point = await page.evaluate((id) => {
+        const node = window.cy?.getElementById(id)
+        const pane = document.getElementById('cy')?.getBoundingClientRect()
+        const pos = node?.renderedPosition()
+        return pane && pos ? { x: pane.left + pos.x, y: pane.top + pos.y } : null
+      }, nodeId)
+      expect(point).not.toBeNull()
+      await page.mouse.click(point.x, point.y)
+    }
+
+    await page.evaluate((id) => window.kgStore.selectAndFocus(id), sourceId)
+    await expect(page.locator('#node-action-bar')).toBeVisible()
+    await page.locator('#btn-move-node').click()
+    await expect(page.locator('#btn-cancel-move')).toBeVisible()
+    await expect(page.locator('#node-action-label')).toContainText('新父节点')
+
+    await clickNode(targetId)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          ({ source, target }) =>
+            window.cy
+              ?.edges()
+              .filter(
+                (edge) =>
+                  edge.source().id() === target &&
+                  edge.target().id() === source &&
+                  edge.data('type') === '子节点'
+              ).length ?? 0,
+          { source: sourceId, target: targetId }
+        )
+      )
+      .toBe(1)
+    await expect(page.locator('#btn-move-node')).toBeVisible()
+    await expect(page.locator('#btn-cancel-move')).toBeHidden()
+  })
+
+  test('手机尺寸下移动按钮应该便于点按并可取消', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const actionBar = page.locator('#node-action-bar')
+    const moveButton = page.locator('#btn-move-node')
+    await expect(actionBar).toBeVisible()
+    await expect(moveButton).toBeVisible()
+
+    const buttonBox = await moveButton.boundingBox()
+    expect(buttonBox?.height ?? 0).toBeGreaterThanOrEqual(40)
+    expect((await actionBar.boundingBox())?.width ?? 999).toBeLessThanOrEqual(370)
+
+    await moveButton.click()
+    await expect(page.locator('#btn-cancel-move')).toBeVisible()
+    await page.locator('#btn-cancel-move').click()
+    await expect(moveButton).toBeVisible()
+  })
+
   test('布局设置滑块应该能调整', async ({ page }) => {
     const repulsionSlider = page.locator('#layout-repulsion')
     await expect(repulsionSlider).toBeVisible()

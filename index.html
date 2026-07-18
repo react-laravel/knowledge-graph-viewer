@@ -29,6 +29,11 @@
           <div class="minimap-viewport"></div>
         </div>
         <div id="editor-layer" class="editor-layer"></div>
+        <div id="node-action-bar" class="node-action-bar hidden" aria-live="polite">
+          <span id="node-action-label" class="node-action-label"></span>
+          <button type="button" class="node-action-btn" id="btn-move-node">移动到…</button>
+          <button type="button" class="node-action-btn secondary" id="btn-cancel-move" hidden>取消</button>
+        </div>
       </div>
 
       <aside id="sidebar" class="sidebar-nav">
@@ -139,6 +144,7 @@
             <li><span class="shortcut-desc">拖拽节点</span><span class="shortcut-keys"><kbd>Space</kbd> + 拖拽</span></li>
             <li><span class="shortcut-desc">选择节点/连线</span><span class="shortcut-keys">单击</span></li>
             <li><span class="shortcut-desc">中心/渐进展开</span><span class="shortcut-keys">选择模式后单击节点</span></li>
+            <li><span class="shortcut-desc">移动已有节点</span><span class="shortcut-keys">选中后点“移动到…”</span></li>
             <li><span class="shortcut-desc">关联节点</span><span class="shortcut-keys"><kbd>Shift</kbd>+点击 / <kbd>L</kbd></span></li>
             <li><span class="shortcut-desc">编辑节点/连线</span><span class="shortcut-keys"><kbd>Enter</kbd> / <kbd>F2</kbd> / 双击</span></li>
             <li><span class="shortcut-desc">创建子节点</span><span class="shortcut-keys"><kbd>Tab</kbd></span></li>

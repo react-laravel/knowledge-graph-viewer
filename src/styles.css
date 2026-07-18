@@ -526,6 +526,7 @@ body {
   .canvas-hint {
     display: none;
   }
+
 }
 
 .sidebar-header {
@@ -1203,6 +1204,86 @@ select:focus {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
+.node-action-bar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  max-width: calc(100% - 36px);
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px 6px 12px;
+  transform: translateX(-50%);
+  border: 1px solid #d8dee9;
+  border-radius: 12px;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(30, 41, 59, 0.16);
+}
+
+.node-action-bar.moving {
+  border-color: #f0b44d;
+  box-shadow: 0 8px 24px rgba(243, 156, 18, 0.2);
+}
+
+.node-action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.node-action-btn {
+  min-width: 76px;
+  min-height: 34px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: #fff;
+  background: #4a90e2;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.node-action-btn:hover,
+.node-action-btn:focus-visible {
+  background: #357abd;
+  outline: none;
+}
+
+.node-action-btn.secondary {
+  color: #7c4f00;
+  background: #fff0cf;
+}
+
+.node-action-btn.secondary:hover,
+.node-action-btn.secondary:focus-visible {
+  background: #ffe4ad;
+}
+
+#cy.move-mode {
+  cursor: crosshair;
+}
+
+@media (max-width: 768px) {
+  .node-action-bar {
+    bottom: 10px;
+    width: calc(100% - 20px);
+    max-width: 440px;
+    justify-content: space-between;
+  }
+
+  .node-action-btn {
+    min-height: 40px;
+    padding-inline: 14px;
+  }
+}
+
 .canvas-hint kbd {
   display: inline-block;
   padding: 1px 5px;
@@ -1327,9 +1408,29 @@ body.theme-dark .auth-spinner {
 }
 
 body.theme-dark .focus-center-wrap,
-body.theme-dark .canvas-hint {
+body.theme-dark .canvas-hint,
+body.theme-dark .node-action-bar {
   background: #151e31;
   border-color: #2c3850;
+}
+
+body.theme-dark .node-action-bar {
+  color: #dbe6ff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+body.theme-dark .node-action-bar.moving {
+  border-color: #c98a28;
+}
+
+body.theme-dark .node-action-btn.secondary {
+  color: #ffd68c;
+  background: #473318;
+}
+
+body.theme-dark .node-action-btn.secondary:hover,
+body.theme-dark .node-action-btn.secondary:focus-visible {
+  background: #5b421e;
 }
 
 body.theme-dark input[type='text'],

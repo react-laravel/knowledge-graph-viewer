@@ -14,6 +14,7 @@ export class InlineEditor {
     this.editingNodeId = null
     this.editingEdgeId = null
     this.linkSourceId = null
+    this.moveModeActive = false
     this.isComposing = false
     this.editStartLabel = ''
     this.textHistory = []
@@ -131,6 +132,7 @@ export class InlineEditor {
     document.addEventListener('keydown', (e) => {
       if (this._isBlockedTarget(e.target)) return
       if (this.isComposing) return
+      if (this.moveModeActive && e.key !== 'Escape') return
 
       if (this._isUndoShortcut(e)) {
         if (this._isInputFocused() && this.editingNodeId) return
@@ -214,7 +216,7 @@ export class InlineEditor {
 
   _isBlockedTarget(el) {
     return el?.closest(
-      '#sidebar input, #sidebar select, #sidebar textarea, #sidebar button, #detail-panel input, #detail-panel textarea, #detail-panel button, #detail-panel a'
+      '#sidebar input, #sidebar select, #sidebar textarea, #sidebar button, #detail-panel input, #detail-panel textarea, #detail-panel button, #detail-panel a, #node-action-bar button'
     )
   }
 
@@ -349,12 +351,17 @@ export class InlineEditor {
       InlineEditor.showToast('请先选中源节点', true)
       return
     }
+    this.onLinkModeStart?.()
     if (this.editingNodeId) this.commitEdit()
     this.clearEdgeSelection()
     this.linkSourceId = this.selectedNodeId
     this.graph.setLinkSource(this.linkSourceId)
     this.container.classList.add('link-mode')
     InlineEditor.showToast('点击目标节点建立关系')
+  }
+
+  setMoveModeActive(active) {
+    this.moveModeActive = !!active
   }
 
   linkNodes(sourceId, targetId) {

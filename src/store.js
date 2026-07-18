@@ -16,6 +16,10 @@ function normalizeNodeLinks(links) {
     .filter(Boolean)
 }
 
+function isHierarchyEdge(edge) {
+  return edge?.hierarchy === true || edge?.type === '子节点'
+}
+
 export class KnowledgeStore {
   graphs = []
   dataMap = {}
@@ -111,7 +115,14 @@ export class KnowledgeStore {
   }
 
   getParentId(nodeId) {
-    const edge = this._currentData().edges.find((e) => e.target === nodeId)
+    const edges = this._currentData().edges
+    const edge = edges.find((e) => e.target === nodeId && isHierarchyEdge(e))
+      ?? edges.find((e) => e.target === nodeId)
+    return edge?.source ?? null
+  }
+
+  getHierarchyParentId(nodeId) {
+    const edge = this._currentData().edges.find((e) => e.target === nodeId && isHierarchyEdge(e))
     return edge?.source ?? null
   }
 
@@ -182,6 +193,7 @@ export class KnowledgeStore {
         source: parentId,
         target: id,
         type: '子节点',
+        hierarchy: true,
       })
     }
 
@@ -200,6 +212,51 @@ export class KnowledgeStore {
       return id
     }
     return this.addChildNode(parentId, label)
+  }
+
+  /** 将已有节点移动到另一个普通节点下；层级边与业务关系边彼此独立。 */
+  moveNodeUnder(nodeId, parentId) {
+    const { nodes, edges } = this._currentData()
+    const node = nodes.find((item) => item.id === nodeId)
+    const parent = nodes.find((item) => item.id === parentId)
+    if (!node || !parent) throw new Error('节点不存在')
+    if (nodeId === parentId) throw new Error('不能移动到自己下面')
+    if (node.group === 'org' || parent.group === 'org') {
+      throw new Error('家族分组不能作为普通节点层级移动')
+    }
+
+    let ancestorId = parentId
+    const visited = new Set()
+    while (ancestorId && !visited.has(ancestorId)) {
+      if (ancestorId === nodeId) throw new Error('不能移动到自己的子节点下面')
+      visited.add(ancestorId)
+      ancestorId = this.getHierarchyParentId(ancestorId)
+    }
+
+    const hierarchyEdges = edges.filter((edge) => edge.target === nodeId && isHierarchyEdge(edge))
+    const primaryEdge = hierarchyEdges[0]
+    if (primaryEdge?.source === parentId && hierarchyEdges.length === 1) return false
+
+    this._pushHistory()
+    if (primaryEdge) {
+      primaryEdge.source = parentId
+      primaryEdge.type = '子节点'
+      primaryEdge.hierarchy = true
+      this.dataMap[this.currentGraphId].edges = edges.filter(
+        (edge) => edge === primaryEdge || !hierarchyEdges.includes(edge)
+      )
+    } else {
+      edges.push({
+        id: `e_${Date.now()}_${this._nextEdgeId()}`,
+        source: parentId,
+        target: nodeId,
+        type: '子节点',
+        hierarchy: true,
+      })
+    }
+
+    this._notify()
+    return true
   }
 
   // === 边操作 ===
