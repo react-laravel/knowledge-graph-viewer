@@ -2,6 +2,20 @@ import { defaultGraph } from './data/defaultGraph.js'
 import { loadFromStorage, saveToStorage } from './storage.js'
 import { enrichEdge, enrichEdges } from './view/relationCategories.js'
 
+function normalizeNodeLinks(links) {
+  if (!Array.isArray(links)) return []
+  return links
+    .map((link) => {
+      const url = String(link?.url ?? '').trim()
+      if (!url) return null
+      return {
+        title: String(link?.title ?? '').trim() || url,
+        url,
+      }
+    })
+    .filter(Boolean)
+}
+
 export class KnowledgeStore {
   graphs = []
   dataMap = {}
@@ -113,12 +127,26 @@ export class KnowledgeStore {
     const nextLabel = updates.label !== undefined ? updates.label.trim() : node.label
     const nextGroup = updates.group !== undefined ? updates.group : node.group
     const nextParent = updates.parent !== undefined ? updates.parent : node.parent
-    if (nextLabel === node.label && nextGroup === node.group && nextParent === node.parent) return
+    const updatesDescription = Object.prototype.hasOwnProperty.call(updates, 'description')
+    const updatesLinks = Object.prototype.hasOwnProperty.call(updates, 'links')
+    const nextDescription = updatesDescription ? String(updates.description ?? '').trim() : node.description
+    const nextLinks = updatesLinks ? normalizeNodeLinks(updates.links) : node.links
+    const descriptionChanged = updatesDescription && nextDescription !== (node.description ?? '')
+    const linksChanged = updatesLinks && JSON.stringify(nextLinks) !== JSON.stringify(normalizeNodeLinks(node.links))
+    if (
+      nextLabel === node.label &&
+      nextGroup === node.group &&
+      nextParent === node.parent &&
+      !descriptionChanged &&
+      !linksChanged
+    ) return
 
     this._pushHistory()
     node.label = nextLabel
     node.group = nextGroup
     node.parent = nextParent
+    if (updatesDescription) node.description = nextDescription
+    if (updatesLinks) node.links = nextLinks
     this._notify()
   }
 

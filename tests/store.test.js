@@ -78,6 +78,25 @@ describe('KnowledgeStore', () => {
     it('不存在抛错', () => {
       expect(() => store.updateNode('xxx', { label: 'x' })).toThrow('不存在')
     })
+
+    it('更新注释和相关链接，并支持撤销', () => {
+      store.updateNode('a', {
+        description: '节点注释',
+        links: [
+          { title: '参考资料', url: 'https://example.com/reference' },
+          { title: '', url: '' },
+        ],
+      })
+
+      expect(store.getNode('a').description).toBe('节点注释')
+      expect(store.getNode('a').links).toEqual([
+        { title: '参考资料', url: 'https://example.com/reference' },
+      ])
+
+      store.undo()
+      expect(store.getNode('a').description).toBeUndefined()
+      expect(store.getNode('a').links).toBeUndefined()
+    })
   })
 
   describe('deleteNode', () => {

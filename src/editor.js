@@ -213,7 +213,9 @@ export class InlineEditor {
   }
 
   _isBlockedTarget(el) {
-    return el?.closest('#sidebar input, #sidebar select, #sidebar textarea, #sidebar button')
+    return el?.closest(
+      '#sidebar input, #sidebar select, #sidebar textarea, #sidebar button, #detail-panel input, #detail-panel textarea, #detail-panel button, #detail-panel a'
+    )
   }
 
   _isUndoShortcut(e) {

@@ -116,6 +116,34 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#detail-content')).toContainText('选中节点或连线查看详情')
   })
 
+  test('节点详情应该能添加注释和外部链接并持久保存', async ({ page }) => {
+    const nodeId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
+    if (!nodeId) return
+    const nodeCount = await page.evaluate(() => window.cy?.nodes().length ?? 0)
+
+    const note = page.locator('.detail-note-input')
+    await expect(note).toBeVisible()
+    await note.fill('这是节点的补充注释')
+    await note.press('Tab')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(nodeCount)
+
+    await page.locator('[data-add-link]').click()
+    const linkRow = page.locator('[data-link-row]').last()
+    await linkRow.locator('[data-link-title]').fill('参考资料')
+    await linkRow.locator('[data-link-url]').fill('example.com/reference')
+    await linkRow.locator('[data-link-url]').press('Enter')
+    await expect(linkRow.locator('[data-link-url]')).toHaveValue('https://example.com/reference')
+    await expect(linkRow.locator('[data-open-link]')).toHaveAttribute('href', 'https://example.com/reference')
+
+    await page.reload()
+    await page.waitForFunction(() => window.kgStore && window.cy)
+    await page.evaluate((id) => window.kgStore.selectAndFocus(id), nodeId)
+    await expect(page.locator('.detail-note-input')).toHaveValue('这是节点的补充注释')
+    const savedLink = page.locator('[data-link-row]').filter({ has: page.locator('[value="参考资料"]') })
+    await expect(savedLink.locator('[data-link-url]')).toHaveValue('https://example.com/reference')
+    await expect(savedLink.locator('[data-open-link]')).toHaveAttribute('href', 'https://example.com/reference')
+  })
+
   test('布局设置滑块应该能调整', async ({ page }) => {
     const repulsionSlider = page.locator('#layout-repulsion')
     await expect(repulsionSlider).toBeVisible()
