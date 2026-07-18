@@ -56,6 +56,11 @@ export class GraphManager {
     this._scheduleMinimapDraw()
   }
 
+  resize() {
+    this.cy.resize()
+    this._scheduleMinimapDraw()
+  }
+
   isMindMap() {
     return this.cy.nodes('[mindMap = "yes"]').length > 0 && this._getMindMapRoot().nonempty()
   }

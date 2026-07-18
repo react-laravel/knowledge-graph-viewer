@@ -215,9 +215,7 @@ export class InlineEditor {
   }
 
   _isBlockedTarget(el) {
-    return el?.closest(
-      '#sidebar input, #sidebar select, #sidebar textarea, #sidebar button, #detail-panel input, #detail-panel textarea, #detail-panel button, #detail-panel a, #node-action-bar button'
-    )
+    return el?.closest('[data-ui-chrome], #node-action-bar')
   }
 
   _isUndoShortcut(e) {

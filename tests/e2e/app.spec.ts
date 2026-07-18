@@ -1,5 +1,27 @@
-import { test, expect, type Dialog } from '@playwright/test'
+import { test, expect, type Dialog, type Page } from '@playwright/test'
 import { authenticatePage } from './auth'
+
+async function openAppMenu(page: Page) {
+  const menu = page.locator('#app-menu')
+  if (!await menu.evaluate((element) => element.classList.contains('app-menu-open'))) {
+    await page.locator('#btn-app-menu').click()
+  }
+  await expect(menu).toHaveClass(/app-menu-open/)
+  await expect(menu).toBeVisible()
+}
+
+async function openDataMenu(page: Page) {
+  await openAppMenu(page)
+  const disclosure = page.locator('#menu-data')
+  if (!await disclosure.evaluate((element) => element.hasAttribute('open'))) {
+    await disclosure.locator('summary').click()
+  }
+}
+
+async function selectViewMode(page: Page, mode: 'focus' | 'expand' | 'full') {
+  await page.locator('#view-mode-select').selectOption(mode)
+  await expect(page.locator('#view-mode-select')).toHaveValue(mode)
+}
 
 test.describe('知识图谱编辑器 - E2E', () => {
   test.beforeEach(async ({ page }) => {
@@ -9,21 +31,37 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await page.waitForFunction(() => window.kgStore && window.cy)
   })
 
-  test('应该看到图谱和侧边栏', async ({ page }) => {
+  test('应该看到图谱、精简工具栏和侧边栏', async ({ page }) => {
     // 检查画布存在（至少一个 canvas 可见）
     const canvas = page.locator('#cy canvas').first()
     await expect(canvas).toBeVisible()
 
     // 检查侧边栏存在
     await expect(page.locator('#sidebar')).toBeVisible()
+    await expect(page.locator('#app-toolbar')).toBeVisible()
+    await expect(page.locator('#search-input')).toBeVisible()
+    await expect(page.locator('#view-mode-select')).toBeVisible()
 
-    // 检查图谱选择器有选项
+    // 图谱管理不常驻，打开菜单后才显示；桌面菜单保留快捷键。
     const select = page.locator('#graph-select')
+    await expect(select).toBeHidden()
+    await openAppMenu(page)
     await expect(select).toBeVisible()
     await expect(select.locator('option')).toHaveCount(1)
+    await expect(page.locator('#menu-shortcuts')).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    const graphWidthBefore = (await page.locator('#graph-pane').boundingBox())?.width ?? 0
+    await page.locator('#btn-sidebar-toggle').click()
+    await expect(page.locator('#sidebar')).toBeHidden()
+    await expect(page.locator('#btn-sidebar-toggle')).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(async () => (await page.locator('#graph-pane').boundingBox())?.width ?? 0).toBeGreaterThan(graphWidthBefore)
+    await page.locator('#btn-sidebar-toggle').click()
+    await expect(page.locator('#sidebar')).toBeVisible()
   })
 
   test('只有中心节点时删除图谱不需要确认', async ({ page }) => {
+    await openAppMenu(page)
     page.once('dialog', (dialog) => dialog.accept('临时图谱'))
     await page.click('#btn-new-graph')
     await expect(page.locator('#graph-select option')).toHaveCount(2)
@@ -34,6 +72,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
       await dialog.accept()
     }
     page.on('dialog', acceptUnexpectedDialog)
+    await openAppMenu(page)
     await page.click('#btn-delete-graph')
     await expect(page.locator('#graph-select option')).toHaveCount(1)
     expect(dialogs).toEqual([])
@@ -41,6 +80,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('图谱还有子节点时删除仍需要确认', async ({ page }) => {
+    await openAppMenu(page)
     page.once('dialog', (dialog) => dialog.accept('有子节点的图谱'))
     await page.click('#btn-new-graph')
     await page.click('#btn-add-child-node')
@@ -51,6 +91,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
       confirmation = dialog.message()
       await dialog.dismiss()
     })
+    await openAppMenu(page)
     await page.click('#btn-delete-graph')
 
     await expect.poll(() => confirmation).toBe('确定删除这个图谱吗？')
@@ -180,20 +221,9 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
   test('桌面端应该能通过移动模式把已有节点移动到目标节点下', async ({ page }) => {
     page.once('dialog', (dialog) => dialog.accept())
-    await page.locator('input[name="view-mode"][value="full"]').check()
+    await selectViewMode(page, 'full')
     const sourceId = '贾母'
     const targetId = '刘姥姥'
-
-    const clickNode = async (nodeId) => {
-      const point = await page.evaluate((id) => {
-        const node = window.cy?.getElementById(id)
-        const pane = document.getElementById('cy')?.getBoundingClientRect()
-        const pos = node?.renderedPosition()
-        return pane && pos ? { x: pane.left + pos.x, y: pane.top + pos.y } : null
-      }, nodeId)
-      expect(point).not.toBeNull()
-      await page.mouse.click(point.x, point.y)
-    }
 
     await page.evaluate((id) => window.kgStore.selectAndFocus(id), sourceId)
     await expect(page.locator('#node-action-bar')).toBeVisible()
@@ -201,7 +231,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#btn-cancel-move')).toBeVisible()
     await expect(page.locator('#node-action-label')).toContainText('新父节点')
 
-    await clickNode(targetId)
+    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), targetId)
     await expect
       .poll(() =>
         page.evaluate(
@@ -226,6 +256,21 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await page.setViewportSize({ width: 390, height: 844 })
     const actionBar = page.locator('#node-action-bar')
     const moveButton = page.locator('#btn-move-node')
+    const toolbarSearch = page.locator('#search-input')
+    const toolbarViewMode = page.locator('#view-mode-select')
+    await expect(page.locator('#app-toolbar')).toBeVisible()
+    await expect(toolbarSearch).toBeVisible()
+    await expect(toolbarViewMode).toBeVisible()
+    await expect(page.locator('#graph-select')).toBeHidden()
+    await expect(page.locator('#menu-shortcuts')).toBeHidden()
+
+    await toolbarSearch.fill('贾母')
+    await page.locator('#btn-clear-search').click()
+    await expect(toolbarSearch).toHaveValue('')
+
+    await selectViewMode(page, 'expand')
+    await selectViewMode(page, 'focus')
+
     await expect(actionBar).toBeVisible()
     await expect(moveButton).toBeVisible()
 
@@ -238,6 +283,32 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await page.locator('#btn-cancel-move').click()
     await expect(moveButton).toBeVisible()
 
+    const sidebarButton = page.locator('#btn-sidebar-toggle')
+    await sidebarButton.click()
+    await expect(page.locator('#sidebar')).toHaveClass(/mobile-sidebar-open/)
+    await expect(page.locator('.tab[data-tab="detail"]')).toBeVisible()
+    await page.locator('.tab[data-tab="detail"]').click()
+    await expect(page.locator('.detail-note-input')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#sidebar')).not.toHaveClass(/mobile-sidebar-open/)
+    await expect(sidebarButton).toBeFocused()
+
+    await sidebarButton.click()
+    await page.locator('.tab[data-tab="tree"]').click()
+    await page.locator('#tree-view .tree-node').first().locator('[data-edit]').click()
+    await expect(page.locator('#sidebar')).not.toHaveClass(/mobile-sidebar-open/)
+    await expect(page.locator('.node-editor.editing textarea')).toBeFocused()
+    await page.keyboard.press('Escape')
+
+    const menuButton = page.locator('#btn-app-menu')
+    await menuButton.click()
+    await expect(page.locator('#graph-select')).toBeVisible()
+    await expect(page.locator('#menu-shortcuts')).toBeHidden()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#app-menu')).not.toHaveClass(/app-menu-open/)
+    await expect(menuButton).toBeFocused()
+
+    await menuButton.click()
     page.once('dialog', (dialog) => dialog.accept('手机导图'))
     await page.click('#btn-new-graph')
     await page.evaluate(() => window.kgStore.selectAndFocus('root'))
@@ -245,7 +316,10 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(moveButton).toBeHidden()
     await expect(page.locator('#btn-add-sibling-node')).toBeHidden()
     await expect(page.locator('#btn-add-child-node')).toBeVisible()
+    await sidebarButton.click()
+    await page.locator('.tab[data-tab="view"]').click()
     await expect(page.locator('#mindmap-layout-section')).toBeVisible()
+    await page.keyboard.press('Escape')
     await expect.poll(() => page.evaluate(() => ({
       locked: window.cy?.getElementById('root').locked(),
       grabbable: window.cy?.getElementById('root').grabbable(),
@@ -280,13 +354,14 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#relation-filter-section')).toBeVisible()
     await expect(page.locator('#timeline-section')).toBeVisible()
     await page.click('.tab[data-tab="tree"]')
+    await openAppMenu(page)
     page.once('dialog', async (dialog) => dialog.accept('技术'))
     await page.click('#btn-new-graph')
     await expect(page.locator('#relation-filter-section')).toHaveClass(/hidden/)
     await expect(page.locator('#timeline-section')).toHaveClass(/hidden/)
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.id || ''))
-      .not.toBe('btn-new-graph')
+      .toBe('cy')
 
     // 新图谱创建后立即有且只有一个中心主题，不再等待第一次按键临时生成。
     await expect
@@ -309,7 +384,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
       locked: true,
       grabbable: false,
     })
-    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+    await expect(page.locator('#view-mode-select')).toHaveValue('full')
     await expect(page.locator('#focus-center-label')).toHaveText('中心主题')
     await expect(page.locator('#val-focus-node')).toHaveText('技术')
     await expect(page.locator('#btn-set-focus')).toBeDisabled()
@@ -353,6 +428,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
     await editor.fill('Obsidian')
     await page.locator('#sidebar').click({ position: { x: 20, y: 20 } })
+    await page.locator('#cy').focus()
 
     // 两个一级主题稳定分列中心左右，中心保持逻辑原点。
     await expect.poll(async () => page.evaluate(() => {
@@ -414,6 +490,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('思维导图中心主题不能通过删除键或空格拖拽移动', async ({ page }) => {
+    await openAppMenu(page)
     page.once('dialog', (dialog) => dialog.accept('技术'))
     await page.click('#btn-new-graph')
     await page.evaluate(() => window.kgStore.selectAndFocus('root'))
@@ -454,8 +531,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
   test('单击画布节点只选择，双击才进入编辑并能改名', async ({ page }) => {
     await page.waitForTimeout(1500)
     page.once('dialog', (dialog) => dialog.accept())
-    await page.locator('input[name="view-mode"][value="full"]').check()
-    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+    await selectViewMode(page, 'full')
     const nodeId = await page.evaluate(() => {
       const node = window.cy
         ?.nodes()
@@ -479,22 +555,23 @@ test.describe('知识图谱编辑器 - E2E', () => {
       .poll(() => page.evaluate((id) => window.cy?.$('node.selected').id() === id, nodeId))
       .toBe(true)
     await expect(editor).toBeHidden()
-    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+    await expect(page.locator('#view-mode-select')).toHaveValue('full')
 
     // 双击是显式编辑动作，且不会附带聚焦或切换视图模式。
     await page.mouse.dblclick(clickPoint.x, clickPoint.y)
     await expect(editor).toBeVisible()
     await expect(editor).toBeFocused()
     await editor.fill('双击改名')
-    await page.locator('#graph-select').click()
+    await page.locator('#btn-app-menu').click()
     await expect
       .poll(() => page.evaluate((id) => window.cy?.getElementById(id).data('label') || '', nodeId))
       .toBe('双击改名')
-    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
+    await expect(page.locator('#view-mode-select')).toHaveValue('full')
+    await page.keyboard.press('Escape')
   })
 
   test('中心展开模式下单击只选择，点“设为中心”才切换中心', async ({ page }) => {
-    await expect(page.locator('input[name="view-mode"][value="focus"]')).toBeChecked()
+    await expect(page.locator('#view-mode-select')).toHaveValue('focus')
     const beforeLabel = (await page.locator('#val-focus-node').textContent())?.trim() || ''
     const target = await page.evaluate(() => {
       const focusLabel = document.getElementById('val-focus-node')?.textContent?.trim()
@@ -518,11 +595,11 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
     await page.locator('#btn-set-focus').click()
     await expect(page.locator('#val-focus-node')).toHaveText(target.label)
-    await expect(page.locator('input[name="view-mode"][value="focus"]')).toBeChecked()
+    await expect(page.locator('#view-mode-select')).toHaveValue('focus')
   })
 
   test('未归入家族方框的节点（如刘姥姥）应该能点击选中', async ({ page }) => {
-    await page.click('.tab[data-tab="data"]')
+    await openDataMenu(page)
     page.once('dialog', (dialog) => dialog.accept())
     await page.click('#btn-reset')
     await page.waitForTimeout(2000)
@@ -552,7 +629,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
   test('导出按钮应该能触发下载', async ({ page }) => {
     const downloadPromise = page.waitForEvent('download', { timeout: 5000 }).catch(() => null)
 
-    await page.click('.tab[data-tab="data"]')
+    await openDataMenu(page)
     await page.click('#btn-export')
 
     const download = await downloadPromise
@@ -562,13 +639,13 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('重新布局按钮应该能工作', async ({ page }) => {
-    await page.click('.tab[data-tab="data"]')
+    await openDataMenu(page)
     await page.click('#btn-layout')
     await page.waitForTimeout(2000)
   })
 
   test('重置按钮应该恢复默认数据', async ({ page }) => {
-    await page.click('.tab[data-tab="data"]')
+    await openDataMenu(page)
 
     page.once('dialog', (dialog) => dialog.accept())
     await page.click('#btn-reset')

@@ -20,8 +20,13 @@ export class SidebarPanel {
     this._knownHierarchyEdgeIds = new Set()
     this._treeClickTimer = null
     this.moveSourceId = null
+    this._appMenuOpen = false
+    this._workspaceSidebarOpen = false
+    this._appMenuReturnFocus = null
+    this._workspaceSidebarReturnFocus = null
 
     this._initTabs()
+    this._initApplicationChrome()
     this._initSearch()
     this._initButtons()
     this._initNodeActions()
@@ -38,38 +43,300 @@ export class SidebarPanel {
   // === Tab 切换 ===
 
   _initTabs() {
-    const tabs = document.querySelectorAll('.tab')
-    const panels = document.querySelectorAll('.tab-panel')
-    tabs.forEach((tab) => {
+    this.tabs = [...document.querySelectorAll('#sidebar .tab')]
+    this.panels = [...document.querySelectorAll('#sidebar .tab-panel')]
+    this.tabs.forEach((tab) => {
+      tab.id = `tab-${tab.dataset.tab}`
       tab.addEventListener('click', () => {
-        tabs.forEach((t) => t.classList.remove('active'))
-        panels.forEach((p) => p.classList.remove('active'))
-        tab.classList.add('active')
-        document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active')
+        this._activateTab(tab.dataset.tab)
+      })
+      tab.addEventListener('keydown', (event) => {
+        const visibleTabs = this.tabs.filter((item) => item.offsetParent !== null)
+        const currentIndex = visibleTabs.indexOf(tab)
+        if (currentIndex < 0) return
+        let nextIndex = null
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % visibleTabs.length
+        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + visibleTabs.length) % visibleTabs.length
+        if (event.key === 'Home') nextIndex = 0
+        if (event.key === 'End') nextIndex = visibleTabs.length - 1
+        if (nextIndex == null) return
+        event.preventDefault()
+        this._activateTab(visibleTabs[nextIndex].dataset.tab, { focus: true })
       })
     })
+    this._activateTab(this.tabs.find((tab) => tab.classList.contains('active'))?.dataset.tab || 'view')
+  }
+
+  _activateTab(tabName, { focus = false } = {}) {
+    if (tabName === 'detail' && !this._isMobileViewport()) tabName = 'view'
+    const activeTab = this.tabs?.find((tab) => tab.dataset.tab === tabName)
+    const activePanel = document.getElementById(`panel-${tabName}`)
+    if (!activeTab || !activePanel) return
+
+    this.tabs.forEach((tab) => {
+      const active = tab === activeTab
+      tab.classList.toggle('active', active)
+      tab.setAttribute('aria-selected', String(active))
+      tab.tabIndex = active ? 0 : -1
+    })
+    this.panels.forEach((panel) => {
+      const active = panel === activePanel
+      panel.classList.toggle('active', active)
+      panel.setAttribute('aria-hidden', String(!active))
+    })
+    activePanel.setAttribute('aria-labelledby', activeTab.id)
+    if (focus) activeTab.focus()
+  }
+
+  // === 顶部工具栏、主菜单与右侧工作栏 ===
+
+  _initApplicationChrome() {
+    this.viewportMedia = window.matchMedia('(max-width: 900px)')
+    this.appMenu = document.getElementById('app-menu')
+    this.appMenuButton = document.getElementById('btn-app-menu')
+    this.appMenuCloseButton = document.getElementById('btn-app-menu-close')
+    this.appMenuBackdrop = document.getElementById('app-menu-backdrop')
+    this.workspaceSidebar = document.getElementById('sidebar')
+    this.workspaceSidebarButton = document.getElementById('btn-sidebar-toggle')
+    this.workspaceSidebarCloseButton = document.getElementById('btn-sidebar-close')
+    this.workspaceSidebarBackdrop = document.getElementById('mobile-sidebar-backdrop')
+    this.graphPane = document.getElementById('graph-pane')
+    this.desktopDetailPanel = document.getElementById('detail-panel')
+    this.mobileDetailHost = document.getElementById('mobile-detail-host')
+    this.detailContent = document.getElementById('detail-content')
+    this.toolbarSearchControl = document.querySelector('.toolbar-search-control')
+    this.toolbarViewMode = document.getElementById('view-mode-select')
+
+    if (!this.appMenu || !this.workspaceSidebar) return
+
+    this.appMenuButton?.addEventListener('click', () => this._setAppMenuOpen(!this._appMenuOpen))
+    this.appMenuCloseButton?.addEventListener('click', () => this._setAppMenuOpen(false))
+    this.appMenuBackdrop?.addEventListener('click', () => this._setAppMenuOpen(false))
+    this.workspaceSidebarButton?.addEventListener('click', () => {
+      this._setWorkspaceSidebarOpen(!this._workspaceSidebarOpen)
+    })
+    this.workspaceSidebarCloseButton?.addEventListener('click', () => this._setWorkspaceSidebarOpen(false))
+    this.workspaceSidebarBackdrop?.addEventListener('click', () => this._setWorkspaceSidebarOpen(false))
+
+    document.addEventListener('keydown', (event) => {
+      const activeModal = this._appMenuOpen
+        ? this.appMenu
+        : this._isMobileViewport() && this._workspaceSidebarOpen
+          ? this.workspaceSidebar
+          : null
+      if (!activeModal) return
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (this._appMenuOpen) this._setAppMenuOpen(false)
+        else this._setWorkspaceSidebarOpen(false)
+        return
+      }
+      if (event.key === 'Tab') this._trapFocus(activeModal, event)
+    }, true)
+
+    const syncViewport = () => this._syncResponsiveChrome()
+    this.viewportMedia.addEventListener?.('change', syncViewport)
+    syncViewport()
+  }
+
+  _isMobileViewport() {
+    return Boolean(this.viewportMedia?.matches)
+  }
+
+  _syncResponsiveChrome() {
+    const mobile = this._isMobileViewport()
+    const activeElement = document.activeElement
+    const activeDetailControl = this.detailContent?.contains(activeElement) ? activeElement : null
+    const detailTab = this.tabs?.find((tab) => tab.dataset.tab === 'detail')
+    const detailHadFocus = Boolean(detailTab?.contains(document.activeElement))
+    const detailActive = detailTab?.classList.contains('active')
+
+    activeDetailControl?.blur?.()
+
+    if (mobile) {
+      if (this.detailContent && this.mobileDetailHost && !this.mobileDetailHost.contains(this.detailContent)) {
+        this.mobileDetailHost.append(this.detailContent)
+      }
+      this._setWorkspaceSidebarOpen(false, { restoreFocus: false })
+    } else {
+      if (detailActive) this._activateTab('view', { focus: detailHadFocus })
+      if (this.detailContent && this.desktopDetailPanel && !this.desktopDetailPanel.contains(this.detailContent)) {
+        this.desktopDetailPanel.append(this.detailContent)
+      }
+      this._setWorkspaceSidebarOpen(true, { restoreFocus: false })
+    }
+    this._setAppMenuOpen(false, { restoreFocus: false })
+    this._syncModalIsolation()
+    this._notifyGraphResize()
+    if (activeDetailControl) {
+      if (mobile) this._focusCanvas()
+      else requestAnimationFrame(() => activeDetailControl.focus?.())
+    }
+  }
+
+  _setAppMenuOpen(open, { restoreFocus = true } = {}) {
+    if (!this.appMenu) return
+    const nextOpen = Boolean(open)
+    if (nextOpen && !this._appMenuOpen) {
+      this._appMenuReturnFocus = document.activeElement
+      if (this._isMobileViewport()) this._setWorkspaceSidebarOpen(false, { restoreFocus: false })
+    }
+    this._appMenuOpen = nextOpen
+    this.appMenu.classList.toggle('app-menu-open', nextOpen)
+    this.appMenu.setAttribute('aria-hidden', String(!nextOpen))
+    this.appMenuButton?.setAttribute('aria-expanded', String(nextOpen))
+    if (this.appMenuBackdrop) this.appMenuBackdrop.hidden = !nextOpen
+    if (nextOpen) {
+      this.appMenu.setAttribute('role', 'dialog')
+      this.appMenu.setAttribute('aria-modal', 'true')
+    } else {
+      this.appMenu.removeAttribute('role')
+      this.appMenu.removeAttribute('aria-modal')
+    }
+    this._syncModalIsolation()
+
+    if (nextOpen) {
+      requestAnimationFrame(() => this.appMenuCloseButton?.focus())
+    } else if (restoreFocus) {
+      const returnFocus = this._appMenuReturnFocus || this.appMenuButton
+      requestAnimationFrame(() => returnFocus?.focus?.())
+    }
+  }
+
+  _setWorkspaceSidebarOpen(open, { restoreFocus = true } = {}) {
+    if (!this.workspaceSidebar) return
+    const nextOpen = Boolean(open)
+    const mobile = this._isMobileViewport()
+    if (nextOpen && !this._workspaceSidebarOpen) {
+      this._workspaceSidebarReturnFocus = document.activeElement
+      if (mobile) this._setAppMenuOpen(false, { restoreFocus: false })
+    }
+    this._workspaceSidebarOpen = nextOpen
+    this.workspaceSidebar.classList.toggle('sidebar-collapsed', !nextOpen)
+    this.workspaceSidebar.classList.toggle('mobile-sidebar-open', mobile && nextOpen)
+    this.workspaceSidebar.setAttribute('aria-hidden', String(!nextOpen))
+    this.workspaceSidebarButton?.setAttribute('aria-expanded', String(nextOpen))
+    if (this.workspaceSidebarBackdrop) this.workspaceSidebarBackdrop.hidden = !(mobile && nextOpen)
+
+    if (mobile && nextOpen) {
+      this.workspaceSidebar.setAttribute('role', 'dialog')
+      this.workspaceSidebar.setAttribute('aria-modal', 'true')
+    } else {
+      this.workspaceSidebar.removeAttribute('role')
+      this.workspaceSidebar.removeAttribute('aria-modal')
+    }
+    this._syncModalIsolation()
+    this._notifyGraphResize()
+
+    if (mobile && nextOpen) {
+      requestAnimationFrame(() => this.workspaceSidebarCloseButton?.focus())
+    } else if (!nextOpen && restoreFocus) {
+      const savedFocus = this._workspaceSidebarReturnFocus
+      const returnFocus = savedFocus && savedFocus !== document.body && !this.workspaceSidebar.contains(savedFocus)
+        ? savedFocus
+        : this.workspaceSidebarButton
+      requestAnimationFrame(() => returnFocus?.focus?.())
+    }
+  }
+
+  _syncModalIsolation() {
+    const menuModal = this._appMenuOpen
+    const sidebarModal = this._isMobileViewport() && this._workspaceSidebarOpen
+    const anyModal = menuModal || sidebarModal
+
+    if (this.graphPane) this.graphPane.inert = anyModal
+    if (this.desktopDetailPanel) this.desktopDetailPanel.inert = anyModal
+    if (this.toolbarSearchControl) this.toolbarSearchControl.inert = anyModal
+    if (this.toolbarViewMode) this.toolbarViewMode.inert = anyModal
+    if (this.appMenuButton) this.appMenuButton.inert = anyModal
+    if (this.workspaceSidebarButton) this.workspaceSidebarButton.inert = anyModal
+    if (this.appMenu) this.appMenu.inert = !menuModal
+    if (this.workspaceSidebar) this.workspaceSidebar.inert = !this._workspaceSidebarOpen || menuModal
+  }
+
+  _trapFocus(container, event) {
+    const focusable = [...container.querySelectorAll(
+      'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), summary, a[href], [tabindex]:not([tabindex="-1"])'
+    )].filter((element) => !element.hidden && element.offsetParent !== null)
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (!container.contains(document.activeElement)) {
+      event.preventDefault()
+      const target = event.shiftKey ? last : first
+      target.focus()
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  _notifyGraphResize() {
+    requestAnimationFrame(() => this.graph.resize?.())
+  }
+
+  closeAppMenu(options) {
+    this._setAppMenuOpen(false, options)
+  }
+
+  closeWorkspaceSidebar(options) {
+    this._setWorkspaceSidebarOpen(false, options)
+  }
+
+  _closeMenuToCanvas() {
+    this.closeAppMenu({ restoreFocus: false })
+    this._focusCanvas()
+  }
+
+  closeAppMenuToCanvas() {
+    this._closeMenuToCanvas()
+  }
+
+  _focusCanvas() {
+    document.getElementById('cy')?.focus({ preventScroll: true })
   }
 
   // === 搜索 ===
 
   _initSearch() {
-    const searchInput = document.getElementById('search-input')
-    searchInput.addEventListener('input', () => {
-      this.searchQuery = searchInput.value
-      if (!this.searchQuery.trim()) {
-        this.graph.clearHighlight()
-      } else {
-        const { nodeIds, edgeIds } = this.store.search(this.searchQuery)
-        this.graph.setHighlight([...nodeIds, ...edgeIds])
-      }
-      this._updateButtonStates()
+    this.searchInputs = [...document.querySelectorAll('[data-graph-search]')]
+    this.searchClearButtons = [...document.querySelectorAll('[data-clear-search]')]
+    this.searchInputs.forEach((input) => {
+      input.addEventListener('input', () => this._setSearchQuery(input.value))
     })
+    this.searchClearButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        this._setSearchQuery('')
+        this.searchInputs.find((input) => input.offsetParent !== null)?.focus()
+      })
+    })
+    this._syncSearchControls()
+  }
 
-    document.getElementById('btn-clear-search').addEventListener('click', () => {
-      searchInput.value = ''
-      this.searchQuery = ''
+  _setSearchQuery(value) {
+    this.searchQuery = String(value ?? '')
+    if (!this.searchQuery.trim()) {
       this.graph.clearHighlight()
-      this._updateButtonStates()
+    } else {
+      const { nodeIds, edgeIds } = this.store.search(this.searchQuery)
+      this.graph.setHighlight([...nodeIds, ...edgeIds])
+    }
+    this._updateButtonStates()
+  }
+
+  _syncSearchControls() {
+    this.searchInputs?.forEach((input) => {
+      if (input.value !== this.searchQuery) input.value = this.searchQuery
+    })
+    this.searchClearButtons?.forEach((button) => {
+      const hasQuery = Boolean(this.searchQuery.trim())
+      button.hidden = !hasQuery
+      button.disabled = !hasQuery
     })
   }
 
@@ -96,6 +363,7 @@ export class SidebarPanel {
         this.viewManager.applyView({ layout: true })
         this.syncInitialSelection()
         SidebarPanel.showToast('导入成功')
+        this._closeMenuToCanvas()
       } catch (err) {
         SidebarPanel.showToast(err.message, true)
       }
@@ -106,18 +374,19 @@ export class SidebarPanel {
       if (!confirm('恢复默认示例数据？当前修改将丢失。')) return
       clearStorage()
       this.store.resetToDefault()
-      this.searchQuery = ''
-      this.graph.clearHighlight()
+      this._setSearchQuery('')
       this.editor.deselect()
       this.viewManager.loadForGraph(this.store.getCurrentGraphId())
       this.viewManager.resetForGraph(this.store.getCurrentGraphId())
       this.viewManager.applyView({ layout: true })
       this.syncInitialSelection()
       SidebarPanel.showToast('已恢复默认数据')
+      this._closeMenuToCanvas()
     })
 
     document.getElementById('btn-layout').addEventListener('click', () => {
       this.graph.runLayout()
+      this._closeMenuToCanvas()
     })
 
     this._initLayoutConfig()
@@ -273,11 +542,9 @@ export class SidebarPanel {
       })
     }
 
-    document.querySelectorAll('input[name="view-mode"]').forEach((radio) => {
-      radio.addEventListener('change', () => {
-        if (radio.checked) this.viewManager.setViewMode(radio.value)
-        this._syncViewControls()
-      })
+    document.getElementById('view-mode-select')?.addEventListener('change', (event) => {
+      this.viewManager.setViewMode(event.target.value)
+      this._syncViewControls()
     })
 
     document.getElementById('btn-reset-focus')?.addEventListener('click', () => {
@@ -441,9 +708,8 @@ export class SidebarPanel {
     document.getElementById('timeline-section')?.classList.toggle('hidden', !showRedChamberFeatures)
     document.getElementById('network-layout-section')?.classList.toggle('hidden', isMindMap)
     document.getElementById('mindmap-layout-section')?.classList.toggle('hidden', !isMindMap)
-    document.querySelectorAll('input[name="view-mode"]').forEach((r) => {
-      r.checked = r.value === st.viewMode
-    })
+    const viewModeSelect = document.getElementById('view-mode-select')
+    if (viewModeSelect) viewModeSelect.value = st.viewMode
     this._syncFocusDepthControl(st)
     document.querySelectorAll('#category-filters [data-category]').forEach((cb) => {
       cb.checked = st.activeCategories.includes(cb.dataset.category)
@@ -801,6 +1067,7 @@ export class SidebarPanel {
       const editBtn = e.target.closest('[data-edit]')
       if (editBtn) {
         e.preventDefault()
+        if (this._isMobileViewport()) this.closeWorkspaceSidebar({ restoreFocus: false })
         if (window.kgStore) window.kgStore.editNode(editBtn.dataset.edit)
         return
       }
@@ -821,6 +1088,10 @@ export class SidebarPanel {
         this._treeClickTimer = setTimeout(() => {
           this._treeClickTimer = null
           if (window.kgStore) window.kgStore.selectAndFocus(nodeId)
+          if (this._isMobileViewport()) {
+            this.closeWorkspaceSidebar({ restoreFocus: false })
+            document.activeElement?.blur?.()
+          }
         }, 220)
         return
       }
@@ -834,6 +1105,7 @@ export class SidebarPanel {
       clearTimeout(this._treeClickTimer)
       this._treeClickTimer = null
       const nodeId = (label || treeNode).dataset.select || treeNode.dataset.id
+      if (this._isMobileViewport()) this.closeWorkspaceSidebar({ restoreFocus: false })
       if (window.kgStore) window.kgStore.editNode(nodeId)
     })
   }
@@ -970,10 +1242,7 @@ export class SidebarPanel {
   // === 按钮状态管理 ===
 
   _updateButtonStates() {
-    const btnClear = document.getElementById('btn-clear-search')
-    if (btnClear) {
-      btnClear.disabled = !this.searchQuery.trim()
-    }
+    this._syncSearchControls()
   }
 
   static showToast(message, isError = false) {

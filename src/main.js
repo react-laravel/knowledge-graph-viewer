@@ -176,6 +176,7 @@ export class App {
         this.viewManager.applyView({ layout: true })
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
+        this.ui.closeAppMenuToCanvas()
       },
       createGraph: async () => {
         const name = prompt('新图谱名称：', '新图谱')
@@ -188,7 +189,7 @@ export class App {
         this.editor.deselect()
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
-        document.getElementById('btn-new-graph')?.blur()
+        this.ui.closeAppMenuToCanvas()
       },
       deleteGraph: async (id) => {
         const nodes = this.store.getAllNodes()
@@ -204,6 +205,7 @@ export class App {
         this.editor.deselect()
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
+        this.ui.closeAppMenuToCanvas()
       },
       refreshList: async () => {
         await this._loadGraphsFromApi()

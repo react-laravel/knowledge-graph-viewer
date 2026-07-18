@@ -67,6 +67,8 @@ test('新图谱新增节点后应自动保存并在刷新后恢复', async ({ pa
   await page.goto('/')
   await page.waitForFunction(() => window.kgStore && window.cy)
 
+  await page.click('#btn-app-menu')
+  await expect(page.locator('#app-menu')).toBeVisible()
   page.once('dialog', async (dialog) => dialog.accept('技术'))
   await page.click('#btn-new-graph')
   await expect(page.locator('#graph-select')).toHaveValue('2')
