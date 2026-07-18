@@ -489,6 +489,64 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeVisible()
   })
 
+  test('非中心主题按 Tab 创建的子主题应该排在父主题外侧且不与中心重叠', async ({ page }) => {
+    await openAppMenu(page)
+    page.once('dialog', (dialog) => dialog.accept('技术'))
+    await page.click('#btn-new-graph')
+
+    await page.keyboard.press('Tab')
+    const editor = page.locator('.node-editor.editing textarea')
+    await expect(editor).toBeFocused()
+    await editor.fill('XPath')
+    await editor.press('Enter')
+    await editor.fill('AI')
+
+    const aiId = await page.evaluate(() => window.cy?.nodes('.node-editing').first().id() || '')
+    expect(aiId).not.toBe('')
+    const existingNodeIds = await page.evaluate(() => window.cy?.nodes().map((node) => node.id()) ?? [])
+
+    // 真实交互里用户会先单击 AI 再立刻按 Tab。单击选择有短暂的双击判定延迟，
+    // 快捷键仍必须使用刚点击的节点，不能继续沿用旧的中心主题。
+    await page.locator('#cy').focus()
+    await page.evaluate(() => window.kgStore.selectAndFocus('root'))
+    await page.evaluate((id) => window.cy?.getElementById(id).emit('tap'), aiId)
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue('新节点')
+
+    await expect.poll(() => page.evaluate(({ aiId, existingNodeIds }) => {
+      const root = window.cy?.getElementById('root')
+      const parent = window.cy?.getElementById(aiId)
+      const child = window.cy?.nodes().filter((node) => !existingNodeIds.includes(node.id())).first()
+      if (!root?.nonempty() || !parent?.nonempty() || !child?.nonempty()) return false
+
+      const hierarchyEdge = window.cy?.edges('[hierarchy = "yes"]').filter((edge) => (
+        edge.source().id() === parent.id() && edge.target().id() === child.id()
+      )).first()
+      const rootPos = root.position()
+      const parentPos = parent.position()
+      const childPos = child.position()
+      const parentOffset = parentPos.x - rootPos.x
+      const childOffset = childPos.x - rootPos.x
+      const cyRect = document.getElementById('cy')?.getBoundingClientRect()
+      const editorRect = document.querySelector('.node-editor.editing')?.getBoundingClientRect()
+      const childRect = child.renderedBoundingBox()
+      const editorAligned = cyRect && editorRect
+        ? Math.hypot(
+          editorRect.left + editorRect.width / 2 - (cyRect.left + childRect.x1 + childRect.w / 2),
+          editorRect.top + editorRect.height / 2 - (cyRect.top + childRect.y1 + childRect.h / 2)
+        ) < 3
+        : false
+
+      return hierarchyEdge?.nonempty()
+        && editorAligned
+        && Math.sign(childOffset) === Math.sign(parentOffset)
+        && Math.abs(childOffset) > Math.abs(parentOffset) + 100
+        && Math.hypot(childPos.x - rootPos.x, childPos.y - rootPos.y) > 150
+        && Math.hypot(childPos.x - parentPos.x, childPos.y - parentPos.y) > 100
+    }, { aiId, existingNodeIds })).toBe(true)
+  })
+
   test('思维导图中心主题不能通过删除键或空格拖拽移动', async ({ page }) => {
     await openAppMenu(page)
     page.once('dialog', (dialog) => dialog.accept('技术'))

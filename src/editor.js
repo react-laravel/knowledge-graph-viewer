@@ -134,6 +134,11 @@ export class InlineEditor {
       if (this.isComposing) return
       if (this.moveModeActive && e.key !== 'Escape') return
 
+      const selectionShortcut = ['Tab', 'Enter', 'F2', 'Delete', 'Backspace', 'l', 'L'].includes(e.key)
+      if (selectionShortcut && !this._isInputFocused()) {
+        this.graph.flushPendingSelection?.()
+      }
+
       if (this._isUndoShortcut(e)) {
         if (this._isInputFocused() && this.editingNodeId) return
         e.preventDefault()
@@ -444,6 +449,8 @@ export class InlineEditor {
     this.showNodeEditor(nodeId)
     this.nodeInput.readOnly = false
     requestAnimationFrame(() => {
+      if (this.editingNodeId !== nodeId) return
+      if (!this._updateOverlayPosition(nodeId)) return
       this.nodeInput.focus()
       const len = this.nodeInput.value.length
       this.nodeInput.setSelectionRange(len, len)

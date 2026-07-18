@@ -32,6 +32,7 @@ export class GraphManager {
     this._onSelect = options.onSelect
     this._onActivate = options.onActivate
     this._pendingTapTimer = null
+    this._pendingSelection = null
     this._showEdgeLabels = false
     this._hoverHighlight = true
     this._themeMode = options.themeMode === 'dark' ? 'dark' : 'light'
@@ -414,9 +415,10 @@ export class GraphManager {
       // Cytoscape 会在 dbltap 前先触发两次 tap。稍后派发单击，避免双击编辑时
       // 又触发聚焦或渐进展开。
       this._cancelPendingTap()
+      this._pendingSelection = selection
       this._pendingTapTimer = setTimeout(() => {
         this._pendingTapTimer = null
-        this._onSelect?.(selection)
+        this.flushPendingSelection()
       }, TAP_DELAY_MS)
     })
 
@@ -432,6 +434,23 @@ export class GraphManager {
       clearTimeout(this._pendingTapTimer)
       this._pendingTapTimer = null
     }
+    this._pendingSelection = null
+  }
+
+  /**
+   * 节点单击会短暂等待双击判定。紧跟单击的快捷键必须先采用这次选择，
+   * 否则 Tab/Enter/Delete 等操作会错误作用于上一个节点。
+   */
+  flushPendingSelection() {
+    if (!this._pendingSelection) return false
+    if (this._pendingTapTimer) {
+      clearTimeout(this._pendingTapTimer)
+      this._pendingTapTimer = null
+    }
+    const selection = this._pendingSelection
+    this._pendingSelection = null
+    this._onSelect?.(selection)
+    return true
   }
 
   cancelPendingSelection() {
