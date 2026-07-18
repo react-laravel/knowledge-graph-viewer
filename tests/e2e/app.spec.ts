@@ -184,6 +184,9 @@ test.describe('知识图谱编辑器 - E2E', () => {
 
   test('单击画布节点应该直接进入编辑并能改名', async ({ page }) => {
     await page.waitForTimeout(1500)
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.locator('input[name="view-mode"][value="full"]').check()
+    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
     const nodeId = await page.evaluate(() => {
       const node = window.cy
         ?.nodes()
@@ -210,6 +213,7 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect
       .poll(() => page.evaluate((id) => window.cy?.getElementById(id).data('label') || '', nodeId))
       .toBe('点击改名')
+    await expect(page.locator('input[name="view-mode"][value="full"]')).toBeChecked()
   })
 
   test('未归入家族方框的节点（如刘姥姥）应该能点击选中', async ({ page }) => {

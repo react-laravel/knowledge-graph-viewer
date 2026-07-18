@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { inferRelationCategory, enrichEdge, defaultActiveCategories } from '../src/view/relationCategories.js'
 import { computeVisibility, makeAggregateId, isTagCollapsed, getAggregatableTags } from '../src/view/viewController.js'
 import { createDefaultViewState } from '../src/view/viewState.js'
+import { ViewManager } from '../src/view/viewManager.js'
 import { defaultGraph } from '../src/data/defaultGraph.js'
 import { applyTimelineFilter } from '../src/view/chapterUtils.js'
 
@@ -152,5 +153,29 @@ describe('viewController', () => {
     const { allowedNodes } = applyTimelineFilter(nodes, edges, 1, true)
     expect(allowedNodes.has('a')).toBe(true)
     expect(allowedNodes.has('b')).toBe(false)
+  })
+})
+
+describe('ViewManager 视图模式', () => {
+  it('点击节点更新焦点时不应从显示全部切换到中心展开', () => {
+    const manager = new ViewManager(null, null)
+    manager.state = createDefaultViewState({ viewMode: 'full', focusNodeId: 'a' })
+    manager.applyView = () => {}
+
+    manager.setFocusNode('b')
+
+    expect(manager.getState().viewMode).toBe('full')
+    expect(manager.getState().focusNodeId).toBe('b')
+  })
+
+  it('双击展开节点时不应从中心展开切换到渐进展开', () => {
+    const manager = new ViewManager(null, null)
+    manager.state = createDefaultViewState({ viewMode: 'focus', focusNodeId: 'a' })
+    manager.applyView = () => {}
+
+    manager.expandFromNode('b')
+
+    expect(manager.getState().viewMode).toBe('focus')
+    expect(manager.getState().expandedNodeIds).toContain('b')
   })
 })

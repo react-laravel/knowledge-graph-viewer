@@ -124,7 +124,6 @@ export class ViewManager {
       this.state.expandedNodeIds = []
       if (this.state.viewMode !== 'full') this.state.focusDepth = 1
     }
-    if (this.state.viewMode === 'full') this.state.viewMode = 'focus'
     this.applyView({ layout })
   }
 
@@ -157,7 +156,6 @@ export class ViewManager {
     if (!this.state.expandedNodeIds.includes(nodeId)) {
       this.state.expandedNodeIds.push(nodeId)
     }
-    if (this.state.viewMode === 'focus') this.state.viewMode = 'expand'
     this.state.focusDepth = Math.min(this.state.focusDepth + 1, 5)
     this.applyView()
   }
