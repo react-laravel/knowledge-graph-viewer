@@ -33,15 +33,27 @@ export class SidebarPanel {
 
   _initTabs() {
     const tabs = document.querySelectorAll('.tab')
-    const panels = document.querySelectorAll('.tab-panel')
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
-        tabs.forEach((t) => t.classList.remove('active'))
-        panels.forEach((p) => p.classList.remove('active'))
-        tab.classList.add('active')
-        document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active')
+        this.activateTab(tab.dataset.tab)
       })
     })
+  }
+
+  activateTab(tabName) {
+    const tab = document.querySelector(`.tab[data-tab="${tabName}"]`)
+    const panel = document.getElementById(`panel-${tabName}`)
+    if (!tab || !panel) return
+
+    document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'))
+    document.querySelectorAll('.tab-panel').forEach((item) => item.classList.remove('active'))
+    tab.classList.add('active')
+    panel.classList.add('active')
+  }
+
+  showViewControls() {
+    this.activateTab('view')
+    this._syncViewControls()
   }
 
   // === 搜索 ===

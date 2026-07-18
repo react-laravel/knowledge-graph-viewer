@@ -587,11 +587,16 @@ export class GraphManager {
     if (node.empty()) return null
 
     const bb = node.renderedBoundingBox()
+    const fontSize = Number.parseFloat(node.style('font-size'))
     return {
       x: bb.x1 + bb.w / 2,
       y: bb.y1 + bb.h / 2,
       w: Math.max(bb.w, 60),
       h: bb.h,
+      fontSize: Number.isFinite(fontSize) ? fontSize * this.cy.zoom() : null,
+      fontFamily: node.style('font-family'),
+      fontWeight: node.style('font-weight'),
+      color: node.style('color'),
     }
   }
 

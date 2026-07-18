@@ -191,6 +191,7 @@ export class App {
         this._updateGraphSelector()
         this.viewManager.applyView({ layout: true })
         this.editor.deselect()
+        this.ui.showViewControls()
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
         document.getElementById('btn-new-graph')?.blur()

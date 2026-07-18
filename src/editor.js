@@ -288,6 +288,13 @@ export class InlineEditor {
     this.overlay.style.top = `${pos.y}px`
     this.overlay.style.width = `${pos.w}px`
     this.overlay.style.height = `${pos.h}px`
+    if (pos.fontSize) this.nodeInput.style.fontSize = `${pos.fontSize}px`
+    if (pos.fontFamily) this.nodeInput.style.fontFamily = pos.fontFamily
+    if (pos.fontWeight) this.nodeInput.style.fontWeight = pos.fontWeight
+    if (pos.color) {
+      this.nodeInput.style.color = pos.color
+      this.nodeInput.style.caretColor = pos.color
+    }
     return true
   }
 

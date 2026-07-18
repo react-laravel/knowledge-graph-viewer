@@ -114,8 +114,14 @@ test.describe('知识图谱编辑器 - E2E', () => {
   })
 
   test('新图谱中编辑节点时按 Tab 应该创建子节点并继续输入', async ({ page }) => {
+    // 即使从其它页签新建图谱，也应自动回到包含关系筛选和时间轴的视图页。
+    await page.click('.tab[data-tab="tree"]')
     page.once('dialog', async (dialog) => dialog.accept('技术'))
     await page.click('#btn-new-graph')
+    await expect(page.locator('.tab[data-tab="view"]')).toHaveClass(/active/)
+    await expect(page.locator('#panel-view')).toHaveClass(/active/)
+    await expect(page.locator('#category-filters [data-category]')).toHaveCount(9)
+    await expect(page.locator('#opt-timeline')).toBeVisible()
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.id || ''))
       .not.toBe('btn-new-graph')
@@ -125,12 +131,27 @@ test.describe('知识图谱编辑器 - E2E', () => {
     const editor = page.locator('.node-editor.editing textarea')
     await expect(editor).toBeVisible()
     await expect(editor).toBeFocused()
+    await page.evaluate(() => window.cy?.zoom(3))
     await editor.fill('技术')
 
     // 编辑时再次按 Tab：提交当前文本，创建子节点，并把输入焦点交给子节点。
     await editor.press('Tab')
     await expect(editor).toBeFocused()
     await expect(editor).toHaveValue('新节点')
+
+    const typography = await page.evaluate(() => {
+      const input = document.querySelector('.node-editor.editing textarea')
+      const node = window.cy?.$('node.node-editing').first()
+      const style = input ? getComputedStyle(input) : null
+      return {
+        editorFontSize: Number.parseFloat(style?.fontSize || '0'),
+        nodeFontSize: node?.nonempty() ? Number.parseFloat(node.style('font-size')) * window.cy.zoom() : 0,
+        editorColor: style?.color || '',
+        nodeColor: node?.nonempty() ? node.style('color') : '',
+      }
+    })
+    expect(Math.abs(typography.editorFontSize - typography.nodeFontSize)).toBeLessThan(0.5)
+    expect(typography.editorColor.replace(/\s/g, '')).toBe(typography.nodeColor.replace(/\s/g, ''))
 
     await expect
       .poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0))
