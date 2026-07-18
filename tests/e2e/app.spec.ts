@@ -182,12 +182,18 @@ test.describe('知识图谱编辑器 - E2E', () => {
     expect(minimumNodeDistance).toBeGreaterThan(80)
   })
 
-  test('点击当前选中节点应该进入编辑并能改名', async ({ page }) => {
+  test('单击画布节点应该直接进入编辑并能改名', async ({ page }) => {
     await page.waitForTimeout(1500)
-    const nodeId = await page.evaluate(() => window.cy?.$('node.selected').id() || '')
+    const nodeId = await page.evaluate(() => {
+      const node = window.cy
+        ?.nodes()
+        .filter((item) => !item.isParent() && !item.selected() && !item.hasClass('kg-hidden'))
+        .first()
+      return node?.nonempty() ? node.id() : window.cy?.$('node.selected').id() || ''
+    })
     if (!nodeId) return
 
-    // 画布上已经呈绿色选中的焦点节点，一次点击就应进入编辑。
+    // 无论节点之前是否选中，一次点击就应进入编辑。
     const clickPoint = await page.evaluate((id) => {
       const node = window.cy?.getElementById(id)
       const pane = document.getElementById('cy')?.getBoundingClientRect()

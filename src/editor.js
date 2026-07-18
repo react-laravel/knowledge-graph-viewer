@@ -613,8 +613,6 @@ export class InlineEditor {
       return
     }
 
-    const wasSelected = this.selectedNodeId === nodeId
-
     if (this.editingNodeId && this.editingNodeId !== nodeId) {
       if (!this.commitEdit()) {
         this.nodeInput.value = this.editStartLabel
@@ -628,11 +626,9 @@ export class InlineEditor {
     this.selectedNodeId = nodeId
     this.graph.setSelected(nodeId)
     this.hideOverlay()
-    if (wasSelected) {
-      requestAnimationFrame(() => {
-        if (this.selectedNodeId === nodeId && !this.editingNodeId) this.startEdit(nodeId)
-      })
-    }
+    requestAnimationFrame(() => {
+      if (this.selectedNodeId === nodeId && !this.editingNodeId) this.startEdit(nodeId)
+    })
   }
 
   onEdgeSelect(edgeId) {
