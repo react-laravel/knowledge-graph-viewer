@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Dialog } from '@playwright/test'
 import { authenticatePage } from './auth'
 
 test.describe('知识图谱编辑器 - E2E', () => {
@@ -21,6 +21,40 @@ test.describe('知识图谱编辑器 - E2E', () => {
     const select = page.locator('#graph-select')
     await expect(select).toBeVisible()
     await expect(select.locator('option')).toHaveCount(1)
+  })
+
+  test('只有中心节点时删除图谱不需要确认', async ({ page }) => {
+    page.once('dialog', (dialog) => dialog.accept('临时图谱'))
+    await page.click('#btn-new-graph')
+    await expect(page.locator('#graph-select option')).toHaveCount(2)
+
+    const dialogs: string[] = []
+    const acceptUnexpectedDialog = async (dialog: Dialog) => {
+      dialogs.push(dialog.message())
+      await dialog.accept()
+    }
+    page.on('dialog', acceptUnexpectedDialog)
+    await page.click('#btn-delete-graph')
+    await expect(page.locator('#graph-select option')).toHaveCount(1)
+    expect(dialogs).toEqual([])
+    page.off('dialog', acceptUnexpectedDialog)
+  })
+
+  test('图谱还有子节点时删除仍需要确认', async ({ page }) => {
+    page.once('dialog', (dialog) => dialog.accept('有子节点的图谱'))
+    await page.click('#btn-new-graph')
+    await page.click('#btn-add-child-node')
+    await expect.poll(() => page.evaluate(() => window.cy?.nodes().length ?? 0)).toBe(2)
+
+    let confirmation = ''
+    page.once('dialog', async (dialog) => {
+      confirmation = dialog.message()
+      await dialog.dismiss()
+    })
+    await page.click('#btn-delete-graph')
+
+    await expect.poll(() => confirmation).toBe('确定删除这个图谱吗？')
+    await expect(page.locator('#graph-select option')).toHaveCount(2)
   })
 
   test('应该能搜索节点', async ({ page }) => {

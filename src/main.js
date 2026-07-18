@@ -191,7 +191,9 @@ export class App {
         document.getElementById('btn-new-graph')?.blur()
       },
       deleteGraph: async (id) => {
-        if (!confirm('确定删除这个图谱吗？')) return
+        const nodes = this.store.getAllNodes()
+        const onlyCenterNode = nodes.length === 1 && this.store.isRootNode(nodes[0].id)
+        if (!onlyCenterNode && !confirm('确定删除这个图谱吗？')) return
         try {
           await knowledgeApi.delete(Number(id))
         } catch {}
