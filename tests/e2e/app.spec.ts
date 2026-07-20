@@ -537,10 +537,25 @@ test.describe('知识图谱编辑器 - E2E', () => {
     await expect(page.locator('#tree-view [data-id="root"] [data-delete]')).toHaveCount(0)
     await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeVisible()
     await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'Obsidian' })).toBeVisible()
-    await page.locator('#btn-tree-toggle').click()
-    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeHidden()
+
+    // 在 XPath 下再挂一层，用于验证「收缩」只收起二级及以下。
+    await page.evaluate(() => window.kgStore.selectAndFocus(
+      window.cy?.nodes().filter((node) => node.data('label') === 'XPath').first().id()
+    ))
+    await page.locator('#cy').focus()
+    await page.keyboard.press('Tab')
+    await expect(editor).toBeFocused()
+    await editor.fill('二级主题')
+    await page.locator('#sidebar').click({ position: { x: 20, y: 20 } })
+    await page.click('.tab[data-tab="tree"]')
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: '二级主题' })).toBeVisible()
+
     await page.locator('#btn-tree-toggle').click()
     await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'XPath' })).toBeVisible()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: 'Obsidian' })).toBeVisible()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: '二级主题' })).toBeHidden()
+    await page.locator('#btn-tree-toggle').click()
+    await expect(page.locator('#tree-view [data-select]').filter({ hasText: '二级主题' })).toBeVisible()
   })
 
   test('非中心主题按 Tab 创建的子主题应该排在父主题外侧且不与中心重叠', async ({ page }) => {

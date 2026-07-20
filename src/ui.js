@@ -950,31 +950,38 @@ export class SidebarPanel {
         e.stopPropagation()
         this._treeAllExpanded = !this._treeAllExpanded
         toggleBtn.textContent = this._treeAllExpanded ? '⊟' : '⊞'
+
+        const dataMap = this.store.exportData().dataMap
+        const currentId = this.store.getCurrentGraphId()
+        const nodes = dataMap[currentId]?.nodes ?? this.store.getAllNodes()
+        const mindMapRootId = this.store.getMindMapRootId?.()
+        const treeParentId = (node) => (
+          mindMapRootId ? (this.store.getHierarchyParentId(node.id) || '') : (node.parent || '')
+        )
+        const childrenMap = {}
+        nodes.forEach((n) => {
+          const parentId = treeParentId(n)
+          if (parentId) {
+            if (!childrenMap[parentId]) childrenMap[parentId] = []
+            childrenMap[parentId].push(n)
+          }
+        })
+        const roots = nodes.filter((n) => !treeParentId(n))
+
+        this.treeExpanded.clear()
         if (!this._treeAllExpanded) {
-          this.treeExpanded.clear()
-        } else {
-          const dataMap = this.store.exportData().dataMap
-          const currentId = this.store.getCurrentGraphId()
-          const nodes = dataMap[currentId]?.nodes ?? this.store.getAllNodes()
-          const mindMapRootId = this.store.getMindMapRootId?.()
-          const treeParentId = (node) => (
-            mindMapRootId ? (this.store.getHierarchyParentId(node.id) || '') : (node.parent || '')
-          )
-          const childrenMap = {}
-          nodes.forEach((n) => {
-            const parentId = treeParentId(n)
-            if (parentId) {
-              if (!childrenMap[parentId]) childrenMap[parentId] = []
-              childrenMap[parentId].push(n)
-            }
+          // 收缩：仅保留中心/根节点展开，一级主题仍可见，更深层收起。
+          roots.forEach((n) => {
+            if ((childrenMap[n.id] || []).length > 0) this.treeExpanded.add(n.id)
           })
+        } else {
           const expandAll = (nodeId) => {
             if ((childrenMap[nodeId] || []).length > 0) {
               this.treeExpanded.add(nodeId)
               childrenMap[nodeId].forEach((c) => expandAll(c.id))
             }
           }
-          nodes.filter((n) => !treeParentId(n)).forEach((n) => expandAll(n.id))
+          roots.forEach((n) => expandAll(n.id))
         }
         this._renderTree()
       })
