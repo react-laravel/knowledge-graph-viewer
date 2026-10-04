@@ -25,7 +25,7 @@ index.html
               └─ SidebarPanel               过渡期 DOM 控制器
 ```
 
-React 组件保留旧 DOM ID，是为了让现有命令式控制器和 Playwright 契约在迁移期继续工作。组件壳目前不会因业务状态重渲染，避免 React 与控制器同时修改同一个 DOM 子树。
+React 组件保留旧 DOM ID，是为了让现有命令式控制器和 Playwright 契约在迁移期继续工作。初始化完成后，应用壳把有类型的工作区命令接口交给 `WorkspaceHud`；它订阅只读视图/历史快照，独立渲染画布工具，不修改旧控制器管理的 DOM。缩放和可见节点适应仍由 `GraphManager` 执行，撤销/重做通过 `InlineEditor` 先解析当前编辑。
 
 ## 状态与副作用边界
 

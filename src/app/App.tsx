@@ -1,15 +1,17 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AppMenu } from '../components/AppMenu'
 import { AuthScreen } from '../components/AuthScreen'
 import { GraphWorkspace } from '../components/GraphWorkspace'
 import { Sidebar } from '../components/Sidebar'
 import { Toolbar } from '../components/Toolbar'
+import type { WorkspaceController } from '../components/WorkspaceHud'
 
 /**
  * 过渡期应用壳：React 负责页面结构，现有图谱控制器继续管理 Cytoscape
- * 与命令式交互。壳本身不维护会导致重渲染的 UI 状态，避免与控制器争夺 DOM。
+ * 与命令式交互。新画布工具独立由 React 管理，不写入旧控制器的 DOM。
  */
 export function App() {
+  const [workspace, setWorkspace] = useState<WorkspaceController | null>(null)
   useEffect(() => {
     let cancelled = false
 
@@ -17,7 +19,9 @@ export function App() {
     // controllers as a separate chunk after React has committed their hosts.
     void import('../application/KnowledgeGraphApplication.js')
       .then(({ bootstrapApplication }) => {
-        if (!cancelled) bootstrapApplication()
+        if (!cancelled) bootstrapApplication((application: WorkspaceController) => {
+          if (!cancelled) setWorkspace(application)
+        })
       })
       .catch((error) => {
         if (cancelled) return
@@ -49,7 +53,7 @@ export function App() {
             <div id="detail-content" className="detail-content" />
           </aside>
 
-          <GraphWorkspace />
+          <GraphWorkspace controller={workspace} />
 
           <button
             type="button"
@@ -74,7 +78,7 @@ export function App() {
 
         <AppMenu />
       </div>
-      <div id="toast" className="toast" />
+      <div id="toast" className="toast" role="status" aria-live="polite" aria-atomic="true" />
     </>
   )
 }

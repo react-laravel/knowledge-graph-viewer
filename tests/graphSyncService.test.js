@@ -71,6 +71,33 @@ describe('GraphSyncService', () => {
     expect(payload.dataMap['8'].edges).not.toBe(remoteGraph.data.edges)
   })
 
+  it('preserves the selected graph when refreshing a reordered server catalog', async () => {
+    const store = createStore({
+      graphs: [{ id: '8', name: '选中图谱' }, { id: '9', name: '另一图谱' }],
+      currentGraphId: '8',
+    })
+    const service = new GraphSyncService(store, {
+      api: createApi({ list: vi.fn(async () => [{ id: 9, name: '另一图谱' }, { id: 8, name: '选中图谱' }]) }),
+    })
+
+    await service.loadGraphs()
+
+    expect(store.loadFromData.mock.calls[0][0].currentGraphId).toBe('8')
+    expect(store.getCurrentGraphId()).toBe('8')
+  })
+
+  it('selects the first remote graph when the previous selection no longer exists', async () => {
+    const store = createStore({ currentGraphId: 'removed' })
+    const service = new GraphSyncService(store, {
+      api: createApi({ list: vi.fn(async () => [{ id: 9, name: '首个' }, { id: 8, name: '另一个' }]) }),
+    })
+
+    await service.loadGraphs()
+
+    expect(store.loadFromData.mock.calls[0][0].currentGraphId).toBe('9')
+    expect(store.getCurrentGraphId()).toBe('9')
+  })
+
   it('updates numeric graph IDs even when the remote catalog was unavailable', async () => {
     const store = createStore({
       graphs: [{ id: '42', name: '技术', description: '' }],

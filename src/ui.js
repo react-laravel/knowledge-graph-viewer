@@ -210,10 +210,12 @@ export class SidebarPanel {
     this._syncModalIsolation()
 
     if (nextOpen) {
-      requestAnimationFrame(() => this.appMenuCloseButton?.focus())
+      requestAnimationFrame(() => {
+        if (this._isAppMenuOpen()) this.appMenuCloseButton?.focus()
+      })
     } else if (restoreFocus) {
       const returnFocus = this._appMenuReturnFocus || this.appMenuButton
-      requestAnimationFrame(() => returnFocus?.focus?.())
+      returnFocus?.focus?.()
     }
   }
 
@@ -243,13 +245,17 @@ export class SidebarPanel {
     this._notifyGraphResize()
 
     if (mobile && nextOpen) {
-      requestAnimationFrame(() => this.workspaceSidebarCloseButton?.focus())
+      requestAnimationFrame(() => {
+        if (this._isMobileViewport() && this._isWorkspaceSidebarOpen() && !this._isAppMenuOpen()) {
+          this.workspaceSidebarCloseButton?.focus()
+        }
+      })
     } else if (!nextOpen && restoreFocus) {
       const savedFocus = this._workspaceSidebarReturnFocus
       const returnFocus = savedFocus && savedFocus !== document.body && !this.workspaceSidebar.contains(savedFocus)
         ? savedFocus
         : this.workspaceSidebarButton
-      requestAnimationFrame(() => returnFocus?.focus?.())
+      returnFocus?.focus?.()
     }
   }
 
@@ -1279,8 +1285,8 @@ export class SidebarPanel {
         this.currentSelection = this._getEditorSelection()
       }
     } else {
-      this.editor.onEdgeSelect(selection.id)
-      this.currentSelection = selection
+      const selected = this.editor.onEdgeSelect(selection.id)
+      this.currentSelection = selected ? selection : this._getEditorSelection()
     }
 
     this._syncSelectionUi()
@@ -1303,7 +1309,7 @@ export class SidebarPanel {
       if (!selected) return false
       this.currentSelection = selection
     } else {
-      this.editor.onEdgeSelect(selection.id)
+      if (!this.editor.onEdgeSelect(selection.id)) return false
       this.currentSelection = selection
     }
     this._syncSelectionUi()
@@ -1335,9 +1341,13 @@ export class SidebarPanel {
         this.currentSelection = this._getEditorSelection()
       }
     } else {
-      this.editor.onEdgeSelect(selection.id)
-      this.editor.startEdgeEdit(selection.id)
-      this.currentSelection = selection
+      const selected = this.editor.onEdgeSelect(selection.id)
+      if (selected) {
+        this.editor.startEdgeEdit(selection.id)
+        this.currentSelection = selection
+      } else {
+        this.currentSelection = this._getEditorSelection()
+      }
     }
 
     this._syncSelectionUi()

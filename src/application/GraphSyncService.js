@@ -24,6 +24,10 @@ export class GraphSyncService {
 
   async loadGraphs() {
     this.graphList = await this.api.list()
+    const currentId = String(this.store.getCurrentGraphId())
+    const selectedId = this.graphList.some((graph) => String(graph.id) === currentId)
+      ? currentId
+      : String(this.graphList[0]?.id ?? currentId)
     this.store.loadFromData({
       graphs: this.graphList.map((graph) => ({
         id: String(graph.id),
@@ -41,7 +45,7 @@ export class GraphSyncService {
           },
         ])
       ),
-      currentGraphId: String(this.graphList[0]?.id ?? this.store.getCurrentGraphId()),
+      currentGraphId: selectedId,
     })
   }
 

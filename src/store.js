@@ -811,8 +811,10 @@ export class KnowledgeStore {
   }
 
   loadFromData(data) {
+    const requestedGraphId = data.currentGraphId ?? this.currentGraphId
     this.graphs = data.graphs ?? this.graphs
     this.dataMap = data.dataMap ?? this.dataMap
+    this.currentGraphId = requestedGraphId
     if (!this.graphs.length) {
       this.graphs = [{ id: 'default', name: '示例图谱', description: '', updatedAt: new Date().toISOString() }]
     }
@@ -822,7 +824,8 @@ export class KnowledgeStore {
         this.dataMap[this.currentGraphId] = { nodes: [...defaultGraph.nodes], edges: [...defaultGraph.edges] }
       }
     }
-    this._clearHistory()
+    this._clearAllHistory()
+    this._syncEdgeCounter()
     this._notify()
   }
 
@@ -831,8 +834,16 @@ export class KnowledgeStore {
     this.graphs = [{ id, name: '示例图谱', description: '', updatedAt: new Date().toISOString() }]
     this.dataMap = { [id]: { nodes: [...defaultGraph.nodes], edges: [...defaultGraph.edges] } }
     this.currentGraphId = id
-    this._clearHistory()
+    this._clearAllHistory()
+    this._syncEdgeCounter()
     this._notify()
+  }
+
+  _clearAllHistory() {
+    this.undoStacks = {}
+    this.redoStacks = {}
+    this._draftHistoryEntries = {}
+    this._ensureStacks(this.currentGraphId)
   }
 
   _clearHistory() {

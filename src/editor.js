@@ -48,6 +48,17 @@ export class InlineEditor {
   // === 事件绑定 ===
 
   _initEvents() {
+    // 中文输入法的候选确认不能同时触发节点创建或关系提交。
+    for (const input of [this.nodeInput, this.edgeInput]) {
+      input.addEventListener('compositionstart', () => {
+        this.isComposing = true
+      })
+      input.addEventListener('compositionend', () => {
+        this.isComposing = false
+        if (input === this.nodeInput && this.editingNodeId) this._recordTextState()
+      })
+    }
+
     // Edge input 事件
     this.edgeInput.addEventListener('mousedown', (e) => {
       if (!this.editingEdgeId && this.selectedEdgeId) {
@@ -57,7 +68,7 @@ export class InlineEditor {
     })
 
     this.edgeInput.addEventListener('keydown', (e) => {
-      if (this.isComposing) return
+      if (this._isComposingKey(e)) return
       if (this._isUndoShortcut(e)) return
 
       if (e.key === 'Enter') {
@@ -77,8 +88,17 @@ export class InlineEditor {
     })
 
     this.edgeInput.addEventListener('blur', () => {
+      this.isComposing = false
+      if (this.editingEdgeId && !this.edgeInput.value.trim()) {
+        // 离开空名称时恢复原关系；保留无效编辑会让下一条关系的名称串到旧 ID。
+        const edge = this.store.getEdge(this.editingEdgeId)
+        if (edge) this.edgeInput.value = edge.type
+        this.editingEdgeId = null
+        this.edgeInput.readOnly = true
+        this.edgeOverlay.classList.remove('editing')
+        return
+      }
       if (this.editingEdgeId) this.commitEdgeEdit()
-      this.editingEdgeId = null
     })
 
     // Node input 事件
@@ -89,17 +109,8 @@ export class InlineEditor {
       }
     })
 
-    this.nodeInput.addEventListener('compositionstart', () => {
-      this.isComposing = true
-    })
-
-    this.nodeInput.addEventListener('compositionend', () => {
-      this.isComposing = false
-      if (this.editingNodeId) this._recordTextState()
-    })
-
     this.nodeInput.addEventListener('keydown', (e) => {
-      if (this.isComposing) return
+      if (this._isComposingKey(e)) return
 
       if (this._isUndoShortcut(e)) {
         e.preventDefault()
@@ -136,20 +147,22 @@ export class InlineEditor {
     })
 
     this.nodeInput.addEventListener('blur', () => {
+      this.isComposing = false
       if (this.editingNodeId) this.resolveCurrentEdit()
     })
 
     // 全局键盘事件
     document.addEventListener('keydown', (e) => {
       if (this._isBlockedTarget(e.target)) return
-      if (this.isComposing) return
+      if (this._isComposingKey(e)) return
       if (this.moveModeActive && e.key !== 'Escape') return
 
       const selectionShortcut = ['Tab', 'Enter', 'F2', 'Delete', 'Backspace', 'l', 'L', 'Escape'].includes(e.key)
       if (selectionShortcut) this.graph.cancelPendingSelection?.()
 
       if (this._isUndoShortcut(e)) {
-        if (this._isInputFocused() && this.editingNodeId) return
+        // 节点输入由自己的文本历史处理；关系输入保留浏览器原生撤销。
+        if (this._isInputFocused()) return
         e.preventDefault()
         if (e.shiftKey) this.handleRedo()
         else this.handleUndo()
@@ -234,6 +247,10 @@ export class InlineEditor {
 
   _isUndoShortcut(e) {
     return (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'
+  }
+
+  _isComposingKey(e) {
+    return this.isComposing || e.isComposing || e.keyCode === 229
   }
 
   _recordTextState() {
@@ -419,7 +436,7 @@ export class InlineEditor {
     }
   }
 
-  startEdgeEdit(edgeId) {
+  startEdgeEdit(edgeId = this.selectedEdgeId) {
     if (!edgeId) return
     if (this.store.isHierarchyEdge?.(edgeId)) {
       InlineEditor.showToast('层级连线由节点位置管理，不能直接编辑', true)
@@ -449,7 +466,7 @@ export class InlineEditor {
     }
   }
 
-  startEdit(nodeId) {
+  startEdit(nodeId = this.selectedNodeId) {
     if (!nodeId) return
     const node = this.store.getNode(nodeId)
     if (!node) return
@@ -563,6 +580,23 @@ export class InlineEditor {
       return
     }
     this._applyGraphHistory(() => this.store.redo())
+  }
+
+  /** 画布工具栏只操作图谱历史，先完成或取消当前输入。 */
+  handleGraphUndo() {
+    const discardDraft = this.store.isDraftNode?.(this.editingNodeId)
+      && (!this.editDirty || !this.nodeInput.value.trim())
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
+    if (!this.resolveCurrentEdit()) return false
+    // 取消未命名草稿已经完成这次撤销，不能顺带撤销更早的有效修改。
+    if (discardDraft) return true
+    return this._applyGraphHistory(() => this.store.undo())
+  }
+
+  handleGraphRedo() {
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
+    if (!this.resolveCurrentEdit()) return false
+    return this._applyGraphHistory(() => this.store.redo())
   }
 
   createChild(fromId = this.selectedNodeId) {
@@ -730,6 +764,7 @@ export class InlineEditor {
   }
 
   onEdgeSelect(edgeId) {
+    if (this.editingEdgeId && !this.commitEdgeEdit()) return false
     if (!this.resolveCurrentEdit()) return false
     this.cancelLinkMode()
 

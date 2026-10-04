@@ -47,14 +47,7 @@ export class KnowledgeGraphApplication {
 
     this.ui = new SidebarPanel(this.store, this.graph, this.editor, this.viewManager, this.detailPanel)
 
-    this.store.subscribe((snapshot, change = {}) => {
-      this.editor.onStoreUpdate()
-      this._updateGraphSelector()
-      this.viewManager.applyView()
-      if (!change.transient) {
-        this.syncService.scheduleSave(snapshot.currentGraphId, snapshot)
-      }
-    })
+    this._subscribeToStore()
 
     try {
       await this.syncService.loadGraphs()
@@ -67,6 +60,29 @@ export class KnowledgeGraphApplication {
 
     this._initGraphSelector()
     this._updateGraphSelector()
+  }
+
+  _subscribeToStore() {
+    this._viewGraphId = this.store.getCurrentGraphId()
+    this.viewManager.loadForGraph(this._viewGraphId)
+
+    return this.store.subscribe((snapshot, change = {}) => {
+      const graphId = snapshot.currentGraphId
+      const idChanged = graphId !== this._viewGraphId
+      // POST 成功后临时 ID 会替换为服务器 ID，仍是同一个图谱的视图。
+      const remapped = idChanged && this.syncService._resolveGraphId(this._viewGraphId) === graphId
+      const graphChanged = idChanged && !remapped
+      if (graphChanged) this.viewManager.loadForGraph(graphId)
+      this._viewGraphId = graphId
+
+      this.editor.onStoreUpdate()
+      this._updateGraphSelector()
+      // 切换时先加载目标视图，再同步和持久化；避免旧图谱覆盖目标筛选。
+      this.viewManager.applyView({ layout: graphChanged })
+      if (!change.transient) {
+        this.syncService.scheduleSave(graphId, snapshot)
+      }
+    })
   }
 
   _initGraphSelector() {
@@ -95,9 +111,7 @@ export class KnowledgeGraphApplication {
         const previousId = this.store.getCurrentGraphId()
         if (id !== previousId) this.syncService.saveNow(previousId)
         this.store.switchGraph(id)
-        this.viewManager.loadForGraph(id)
         this.editor.deselect()
-        this.viewManager.applyView({ layout: true })
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
         this.ui.closeAppMenuToCanvas()
@@ -133,8 +147,6 @@ export class KnowledgeGraphApplication {
         }
 
         this.store.deleteGraph(graphId)
-        this.viewManager.loadForGraph(this.store.getCurrentGraphId())
-        this.viewManager.applyView({ layout: true })
         this.editor.deselect()
         this._updateGraphSelector()
         this.ui.syncInitialSelection()
@@ -176,10 +188,41 @@ export class KnowledgeGraphApplication {
     const btnDelete = document.getElementById('btn-delete-graph')
     if (btnDelete) btnDelete.disabled = graphs.length <= 1
   }
+
+  createWorkspaceController() {
+    const { store, graph, editor, viewManager } = this
+    return {
+      getState: () => ({
+        ...graph.getViewportState(),
+        canUndo: store.canUndo(),
+        canRedo: store.canRedo(),
+      }),
+      subscribe: (listener) => {
+        const stopStore = store.subscribe(listener)
+        const stopView = viewManager.subscribe(listener)
+        graph.cy.on('zoom', listener)
+        return () => {
+          stopStore()
+          stopView()
+          graph.cy.off('zoom', listener)
+        }
+      },
+      undo: () => editor.handleGraphUndo(),
+      redo: () => editor.handleGraphRedo(),
+      zoomBy: (factor) => graph.zoomBy(factor),
+      resetZoom: () => graph.zoomTo(1),
+      fit: () => graph.fitVisibleGraph(),
+    }
+  }
 }
 
-export function bootstrapApplication() {
+export function bootstrapApplication(onReady) {
   const application = new KnowledgeGraphApplication()
-  void application.init()
+  void application.init().then(() => {
+    if (application.graph) onReady?.(application.createWorkspaceController())
+  }).catch((error) => {
+    console.error('应用初始化失败', error)
+    SidebarPanel.showToast('应用初始化失败，请刷新后重试', true)
+  })
   return application
 }

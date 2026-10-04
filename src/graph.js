@@ -174,6 +174,33 @@ export class GraphManager {
     this.cy.fit(eles, 60)
   }
 
+  getViewportState() {
+    return {
+      zoom: this.cy.zoom(),
+      minZoom: this.cy.minZoom(),
+      maxZoom: this.cy.maxZoom(),
+      // 样式更新后的 :visible 缓存可能尚未刷新，kg-hidden 是视图的权威状态。
+      nodes: this.cy.nodes().not('.kg-hidden').length,
+      edges: this.cy.edges().not('.kg-hidden').length,
+    }
+  }
+
+  zoomTo(level) {
+    if (!Number.isFinite(level)) return
+    this.cy.zoom({
+      level: Math.max(this.cy.minZoom(), Math.min(this.cy.maxZoom(), level)),
+      renderedPosition: { x: this.cy.width() / 2, y: this.cy.height() / 2 },
+    })
+  }
+
+  zoomBy(factor) {
+    if (Number.isFinite(factor) && factor > 0) this.zoomTo(this.cy.zoom() * factor)
+  }
+
+  fitVisibleGraph() {
+    this.fitToVisibleNodes(new Set(this.cy.nodes().not('.kg-hidden').map((node) => node.id())))
+  }
+
   _getGraphBounds() {
     const nodes = this._getMinimapElements().nodes().filter((n) => this._isFinitePos(n.position()))
     if (nodes.length === 0) return { x: 0, y: 0, w: 100, h: 100 }
@@ -426,12 +453,21 @@ export class GraphManager {
     })
 
     document.addEventListener('keyup', (e) => {
-      if (e.key === ' ' && this.spacePressed) {
-        this.spacePressed = false
-        this._applyNodeDragMode()
-        this.container.classList.add('space-panning')
-      }
+      if (e.key === ' ') this._resetDragMode()
     })
+
+    // 切到其他窗口或标签页时可能收不到 keyup，避免节点一直处于可拖动状态。
+    window.addEventListener('blur', () => this._resetDragMode())
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this._resetDragMode()
+    })
+  }
+
+  _resetDragMode() {
+    if (!this.spacePressed) return
+    this.spacePressed = false
+    this._applyNodeDragMode()
+    this.container.classList.add('space-panning')
   }
 
   _applyNodeDragMode() {

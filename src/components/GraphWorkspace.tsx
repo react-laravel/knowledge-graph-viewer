@@ -1,7 +1,10 @@
-export function GraphWorkspace() {
+import { WorkspaceHud, type WorkspaceController } from './WorkspaceHud'
+
+export function GraphWorkspace({ controller }: { controller: WorkspaceController | null }) {
   return (
     <div id="graph-pane" className="graph-pane">
       <div id="cy" tabIndex={0} aria-label="知识图谱画布" />
+      <WorkspaceHud controller={controller} />
       <div id="minimap" className="minimap">
         <div className="minimap-viewport" />
       </div>

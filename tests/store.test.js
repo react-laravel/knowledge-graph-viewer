@@ -738,6 +738,92 @@ describe('KnowledgeStore', () => {
       expect(s2.getNode('a').label).toBe('A')
       expect(s2.getEdge('edge_ab').type).toBe('链接')
     })
+
+    it('导入多个图谱时应打开文件指定的当前图谱', () => {
+      store.loadFromData({
+        graphs: [{ id: 'g1', name: '原图谱' }, { id: 'g2', name: '导入图谱' }],
+        dataMap: {
+          g1: { nodes: makeNodes(), edges: [] },
+          g2: { nodes: [{ id: 'imported', label: '导入节点' }], edges: [] },
+        },
+        currentGraphId: 'g2',
+      })
+
+      expect(store.getCurrentGraphId()).toBe('g2')
+      expect(store.getNode('imported')?.label).toBe('导入节点')
+    })
+
+    it('未指定当前图谱时保留仍有效的当前选择，无效选择回退到首个图谱', () => {
+      const graphs = [{ id: 'first', name: '首个图谱' }, { id: 'g1', name: '当前图谱' }]
+      const dataMap = {
+        first: { nodes: [], edges: [] },
+        g1: { nodes: makeNodes(), edges: [] },
+      }
+      store.loadFromData({ graphs, dataMap })
+      expect(store.getCurrentGraphId()).toBe('g1')
+
+      store.loadFromData({ graphs, dataMap, currentGraphId: 'missing' })
+      expect(store.getCurrentGraphId()).toBe('first')
+    })
+
+    it('导入关系后新增关系应使用新的唯一 ID', () => {
+      store.loadFromData({
+        graphs: [{ id: 'g1', name: '导入图谱' }, { id: 'g2', name: '其他图谱' }],
+        dataMap: {
+          g1: {
+            nodes: makeNodes(),
+            edges: [{ id: 'e_1', source: 'a', target: 'b', type: '朋友' }],
+          },
+          g2: {
+            nodes: makeNodes(),
+            edges: [{ id: 'e_12', source: 'a', target: 'b', type: '朋友' }],
+          },
+        },
+        currentGraphId: 'g1',
+      })
+
+      const edgeId = store.addEdge({ source: 'b', target: 'c', type: '夫妻' })
+      expect(edgeId).toBe('e_13')
+      expect(store.getEdge('e_1')).toMatchObject({ source: 'a', target: 'b' })
+      expect(store.getEdge(edgeId)).toMatchObject({ source: 'b', target: 'c' })
+      const edgeIds = store._currentData().edges.map((edge) => edge.id)
+      expect(new Set(edgeIds).size).toBe(edgeIds.length)
+    })
+
+    it('替换数据时清空所有图谱的撤销、重做和草稿历史', () => {
+      store.undoStacks.old = [{ nodes: [], edges: [] }]
+      store.redoStacks.old = [{ nodes: [], edges: [] }]
+      store._draftHistoryEntries.old = new Map([['draft', {}]])
+      store.addNode({ id: 'before-import', label: '导入前' })
+
+      store.loadFromData({
+        graphs: [{ id: 'g1', name: '替换图谱' }],
+        dataMap: { g1: { nodes: [{ id: 'after-import', label: '导入后' }], edges: [] } },
+        currentGraphId: 'g1',
+      })
+
+      expect(store.undoStacks).toEqual({ g1: [] })
+      expect(store.redoStacks).toEqual({ g1: [] })
+      expect(store._draftHistoryEntries).toEqual({})
+      expect(store.undo()).toBe(false)
+      expect(store.getNode('after-import')).not.toBeNull()
+    })
+
+    it('恢复默认示例时清空所有图谱的历史并同步关系计数器', () => {
+      store.undoStacks.old = [{ nodes: [], edges: [] }]
+      store.redoStacks.old = [{ nodes: [], edges: [] }]
+      store._draftHistoryEntries.old = new Map([['draft', {}]])
+      store._edgeIdCounter = 999999
+
+      store.resetToDefault()
+
+      const graphId = store.getCurrentGraphId()
+      expect(store.undoStacks).toEqual({ [graphId]: [] })
+      expect(store.redoStacks).toEqual({ [graphId]: [] })
+      expect(store._draftHistoryEntries).toEqual({})
+      expect(store._edgeIdCounter).toBeLessThan(999999)
+      expect(store.canUndo()).toBe(false)
+    })
   })
 
   // === 未覆盖分支补全 ===

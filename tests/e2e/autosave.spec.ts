@@ -270,6 +270,7 @@ test('DELETE 失败时应保留图谱并且之后仍可保存', async ({ page })
   await page.click('#btn-app-menu-close')
   await page.evaluate(() => window.kgStore.editNode('原节点'))
   const editor = page.locator('.node-editor.editing textarea')
+  await expect(editor).toBeFocused()
   await editor.fill('删除失败后仍可保存')
   await page.locator('#cy').click({ position: { x: 10, y: 10 } })
 
